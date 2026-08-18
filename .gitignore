@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+*/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+.tools/
+recycle-backend-test/
+AI2_state_analysis_package.zip

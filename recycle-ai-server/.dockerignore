@@ -1,0 +1,11 @@
+.env
+.venv/
+__pycache__/
+*/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+uvicorn.out.log
+uvicorn.err.log
+.git/
+.gitignore
