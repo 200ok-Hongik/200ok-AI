@@ -1,17 +1,29 @@
 import json
+import logging
+import time
 from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from openai import APITimeoutError
 
-from services.openai_vision_service import analyze_pet_bottle_image
-from services.result_builder import build_analysis_result, build_rule_input
+from services.openai_vision_service import analyze_numbered_original_image, analyze_pet_bottle_image
+from services.result_builder import (
+    build_analysis_result,
+    build_multi_object_analysis_result,
+    build_multi_rule_input,
+    build_rule_input,
+    should_reanalyze_high,
+)
 from services.yolo_parser import parse_yolo_json
-from services.yolo_service import debug_yolo_detection, run_yolo_and_crop
+from services.yolo_service import debug_yolo_detection, run_yolo_and_crop, run_yolo_multi_object
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("recycle_ai_server")
 
 app = FastAPI(
     title="Recycle AI Server",
-    description="Original image -> YOLO crop -> GPT Vision checklist JSON",
-    version="1.0.0",
+    description="Original image -> YOLO numbered bboxes -> GPT Vision object checklist JSON",
+    version="1.1.0",
 )
 
 
@@ -20,38 +32,87 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def _elapsed_ms(started_at: float) -> int:
+    return round((time.perf_counter() - started_at) * 1000)
+
+
 @app.post("/analyze")
 async def analyze_full_pipeline(
     image: UploadFile = File(..., description="Original image file"),
     rule_input_only: bool = Form(False, description="Return compact rule input only when true"),
     region_code: str | None = Form(None, description="Optional region code. Example: SEOUL_MAPO_GU"),
+    image_id: str | None = Form(None, description="Optional image id from backend storage. Example: image_001"),
 ) -> dict[str, Any]:
+    total_started_at = time.perf_counter()
     try:
+        logger.info("analysis request started image_id=%s filename=%s", image_id, image.filename)
+        read_started_at = time.perf_counter()
         image_bytes = await image.read()
+        logger.info("analysis image_read_ms=%s size_bytes=%s", _elapsed_ms(read_started_at), len(image_bytes))
 
         if not image_bytes:
             raise ValueError("image file is empty.")
 
-        yolo_result, crop_bytes, crop_mime_type = run_yolo_and_crop(
+        yolo_started_at = time.perf_counter()
+        yolo_result, annotated_image_bytes, annotated_mime_type = run_yolo_multi_object(
             image_bytes=image_bytes,
             mime_type=image.content_type or "image/jpeg",
         )
-
-        state_result = analyze_pet_bottle_image(
-            image_bytes=crop_bytes,
-            mime_type=crop_mime_type,
+        logger.info(
+            "analysis yolo_ms=%s object_count=%s",
+            _elapsed_ms(yolo_started_at),
+            yolo_result.get("objectCount"),
         )
 
-        analysis_result = build_analysis_result(yolo_result, state_result)
+        low_started_at = time.perf_counter()
+        low_vlm_result = analyze_numbered_original_image(
+            image_bytes=annotated_image_bytes,
+            yolo_objects=yolo_result["objects"],
+            mime_type=annotated_mime_type,
+            detail="low",
+        )
+        logger.info("analysis vlm_low_ms=%s", _elapsed_ms(low_started_at))
+
+        should_use_high, low_review_reasons = should_reanalyze_high(yolo_result, low_vlm_result)
+        final_vlm_result = low_vlm_result
+        detail_used = "low"
+
+        if should_use_high:
+            high_started_at = time.perf_counter()
+            final_vlm_result = analyze_numbered_original_image(
+                image_bytes=annotated_image_bytes,
+                yolo_objects=yolo_result["objects"],
+                mime_type=annotated_mime_type,
+                detail="high",
+            )
+            detail_used = "high"
+            logger.info("analysis vlm_high_ms=%s", _elapsed_ms(high_started_at))
+
+        build_started_at = time.perf_counter()
+        analysis_result = build_multi_object_analysis_result(
+            yolo_result=yolo_result,
+            vlm_result=final_vlm_result,
+            detail_used=detail_used,
+            reanalyzed_with_high=should_use_high,
+            low_review_reasons=low_review_reasons,
+            image_id=image_id,
+        )
+        logger.info("analysis build_result_ms=%s", _elapsed_ms(build_started_at))
 
         if rule_input_only:
-            return build_rule_input(analysis_result, region_code=region_code)
+            logger.info("analysis completed total_ms=%s response=v2", _elapsed_ms(total_started_at))
+            return build_multi_rule_input(analysis_result, region_code=region_code)
 
+        logger.info("analysis completed total_ms=%s response=v1", _elapsed_ms(total_started_at))
         return analysis_result
 
+    except APITimeoutError as exc:
+        logger.exception("analysis openai_timeout total_ms=%s", _elapsed_ms(total_started_at))
+        raise HTTPException(status_code=504, detail="AI analysis timed out while calling GPT Vision.") from exc
     except NotImplementedError as exc:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("analysis failed total_ms=%s", _elapsed_ms(total_started_at))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

@@ -7,10 +7,11 @@ from typing import Any
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from prompts.pet_bottle_prompt import PET_BOTTLE_STATE_PROMPT
+from prompts.pet_bottle_prompt import MULTI_OBJECT_STATE_PROMPT, PET_BOTTLE_STATE_PROMPT
 load_dotenv()
 
 DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.5")
+OPENAI_TIMEOUT_SECONDS = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "60"))
 
 
 def _image_to_data_url(image_bytes: bytes, mime_type: str) -> str:
@@ -75,6 +76,7 @@ def analyze_pet_bottle_image(
     image_bytes: bytes,
     mime_type: str = "image/jpeg",
     model: str = DEFAULT_MODEL,
+    detail: str = "auto",
 ) -> dict[str, Any]:
     """
     crop 이미지를 GPT Vision에 보내 페트병 상태 JSON을 반환한다.
@@ -83,7 +85,7 @@ def analyze_pet_bottle_image(
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is not set. Check your .env file.")
 
-    client = OpenAI(api_key=api_key)
+    client = OpenAI(api_key=api_key, timeout=OPENAI_TIMEOUT_SECONDS)
 
     response = client.responses.create(
         model=model,
@@ -98,6 +100,53 @@ def analyze_pet_bottle_image(
                     {
                         "type": "input_image",
                         "image_url": _image_to_data_url(image_bytes, mime_type),
+                        "detail": detail,
+                    },
+                ],
+            }
+        ],
+    )
+
+    raw_text = response.output_text or ""
+    return _parse_gpt_json(raw_text)
+
+
+def analyze_numbered_original_image(
+    image_bytes: bytes,
+    yolo_objects: list[dict[str, Any]],
+    mime_type: str = "image/jpeg",
+    detail: str = "low",
+    model: str = DEFAULT_MODEL,
+) -> dict[str, Any]:
+    """
+    YOLO 번호 bbox가 표시된 원본 이미지를 GPT Vision에 보내
+    객체별 품목과 상태 분석 JSON을 반환한다.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not set. Check your .env file.")
+
+    client = OpenAI(api_key=api_key, timeout=OPENAI_TIMEOUT_SECONDS)
+    prompt = (
+        f"{MULTI_OBJECT_STATE_PROMPT}\n\n"
+        "YOLO 객체 목록:\n"
+        f"{json.dumps(yolo_objects, ensure_ascii=False, indent=2)}"
+    )
+
+    response = client.responses.create(
+        model=model,
+        input=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": prompt,
+                    },
+                    {
+                        "type": "input_image",
+                        "image_url": _image_to_data_url(image_bytes, mime_type),
+                        "detail": detail,
                     },
                 ],
             }

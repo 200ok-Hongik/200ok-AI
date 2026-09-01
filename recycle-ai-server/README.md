@@ -1,23 +1,23 @@
 # Recycle AI Server
 
-AI-2 상태분석용 FastAPI 서버입니다.
+분리배출 AI 분석용 FastAPI 서버입니다.
 
-Colab에서 실험하던 흐름:
-
-```text
-crop 이미지 -> GPT Vision -> 상태 JSON 출력
-```
-
-을 Spring Boot가 호출 가능한 API 서버 형태로 바꾼 프로젝트입니다.
+현재 핵심 구조는 아래 방식입니다.
 
 ```text
-Spring Boot
--> POST /analyze
--> FastAPI AI Server
--> GPT Vision
--> JSON Response
--> Spring Boot
+사용자 원본 이미지
+-> EXIF 회전/이미지 형식 보정
+-> YOLO 다중 객체 탐지
+-> 중복 bbox 제거
+-> 객체 ID 부여
+-> 원본 이미지 위에 번호 bbox 표시
+-> GPT Vision low 분석
+-> 불확실하면 동일한 원본 이미지를 GPT Vision high 재분석
+-> 객체별 JSON 반환
+-> Spring Boot Rule DB 매핑
 ```
+
+중요: `/analyze`는 더 이상 crop 이미지를 만들지 않습니다. YOLO가 표시한 번호 bbox가 있는 원본 이미지를 GPT Vision에 전달합니다.
 
 ## 설치
 
@@ -47,30 +47,28 @@ models/best.pt
 ## 실행
 
 ```powershell
-python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn main:app --reload --host 0.0.0.0 --port 8010
 ```
 
 Swagger:
 
 ```text
-http://127.0.0.1:8000/docs
+http://127.0.0.1:8010/docs
 ```
 
 Health check:
 
 ```text
-http://127.0.0.1:8000/health
+http://127.0.0.1:8010/health
 ```
 
 ## API
 
 ### POST /analyze
 
-최종 A 구조용 API입니다.
+백엔드가 사용하는 메인 분석 API입니다.
 
-Spring Boot가 원본 이미지를 보내면 FastAPI 서버 내부에서 YOLO -> crop -> GPT Vision을 실행합니다.
-
-`services/yolo_service.py`에서 AI-1 YOLO 모델을 로드하고 bbox 기준 crop을 생성합니다.
+Spring Boot가 원본 이미지를 보내면 FastAPI 서버 내부에서 YOLO 다중 객체 탐지와 GPT Vision 상태 분석을 수행합니다.
 
 전송 방식:
 
@@ -88,20 +86,102 @@ multipart/form-data
 
 | Key | Type | 설명 |
 | --- | --- | --- |
-| `rule_input_only` | Boolean | true면 Rule DB용 최소 JSON만 반환 |
-| `region_code` | Text | 예: SEOUL |
+| `rule_input_only` | Boolean | `true`면 Rule DB용 최소 JSON만 반환 |
+| `region_code` | Text | 예: `SEOUL_MAPO_GU` |
+| `image_id` | Text | 백엔드가 이미지 저장 후 발급한 ID. 예: `image_001` |
+
+응답 예시:
+
+```json
+{
+  "image": {
+    "imageId": "image_001",
+    "width": 2560,
+    "height": 1440
+  },
+  "imageQuality": {
+    "status": "SUFFICIENT",
+    "issues": []
+  },
+  "analysis": {
+    "mode": "ORIGINAL_NUMBERED_BBOX",
+    "modelVersion": "v1.1.0",
+    "currentLevel": "HIGH",
+    "attemptedLevels": ["LOW", "HIGH"],
+    "needsHighAnalysis": true,
+    "highTriggerReasons": [
+      {
+        "code": "REQUIRED_STATE_NULL",
+        "objectId": "object_1",
+        "field": "isEmpty"
+      }
+    ]
+  },
+  "objects": [
+    {
+      "objectId": "object_1",
+      "bbox": {
+        "xMin": 1286,
+        "yMin": 714,
+        "xMax": 2760,
+        "yMax": 1220
+      },
+      "yolo": {
+        "itemCode": "PET_BOTTLE",
+        "className": "pet_bottle",
+        "confidence": 0.935
+      },
+      "vlm": {
+        "itemCode": "PET_BOTTLE",
+        "confidence": 0.95,
+        "states": {
+          "isTransparent": true,
+          "hasLabel": true,
+          "isEmpty": null,
+          "hasCap": false,
+          "isContaminated": false,
+          "isCrushed": false
+        },
+        "yoloItemMatches": true,
+        "multipleObjectsInBox": false,
+        "hasUnlabeledNearbyObject": false,
+        "isTooSmallOrBlurred": false,
+        "needsReview": true,
+        "reviewReasons": [
+          {
+            "code": "REQUIRED_STATE_NULL",
+            "objectId": "object_1",
+            "field": "isEmpty"
+          }
+        ]
+      },
+      "review": {
+        "status": "PENDING"
+      },
+      "finalResult": null
+    }
+  ],
+  "additionalObjects": []
+}
+```
+
+### 불확실 판정 조건
+
+아래 중 하나라도 해당하면 동일한 번호 bbox 원본 이미지를 `detail=high`로 재분석합니다.
+
+- YOLO와 VLM의 품목이 다름
+- VLM이 `needsReview=true` 반환
+- 필수 상태값이 `null`
+- bbox 하나에 여러 객체가 있다고 판단
+- bbox가 없는 추가 객체 발견
+- 객체가 너무 작거나 흐림
+- 이미지 품질이 부족함
 
 ### POST /analyze-ai2
 
-AI-2 단독 테스트용 API입니다.
+예전 crop 기반 AI-2 단독 테스트용 API입니다.
 
-AI-1이 이미 만든 crop 이미지와 yolo_json을 넣어 GPT Vision 상태분석만 테스트합니다.
-
-전송 방식:
-
-```text
-multipart/form-data
-```
+새 메인 흐름에서는 사용하지 않지만, AI-1이 이미 만든 crop 이미지와 yolo_json으로 GPT Vision 상태분석만 따로 테스트할 때 남겨둔 호환 API입니다.
 
 필수 필드:
 
@@ -110,55 +190,47 @@ multipart/form-data
 | `crop` | File | YOLO가 만든 crop 이미지 |
 | `yolo_json` | Text | YOLO 탐지 결과 JSON 문자열 |
 
-선택 필드:
+### POST /debug-yolo
+
+YOLO 모델이 어떤 클래스를 탐지하는지 확인하는 디버그 API입니다.
+
+필수 필드:
 
 | Key | Type | 설명 |
 | --- | --- | --- |
-| `rule_input_only` | Boolean | true면 Rule DB용 최소 JSON만 반환 |
-| `region_code` | Text | 예: SEOUL |
-
-`yolo_json` 예시:
-
-```json
-{"itemCode":"PET_BOTTLE","bbox":[1,1,2560,1440],"confidence":0.991}
-```
-
-응답 예시:
-
-```json
-{
-  "itemCode": "PET_BOTTLE",
-  "itemName": "페트병",
-  "bbox": [1, 1, 2560, 1440],
-  "confidence": 0.991,
-  "states": {
-    "isTransparent": true,
-    "hasLabel": true,
-    "isEmpty": true,
-    "hasCap": true,
-    "isContaminated": false,
-    "isCrushed": false
-  },
-  "needUserCheck": []
-}
-```
+| `image` | File | YOLO 탐지 테스트용 이미지 |
 
 ## 백엔드 연결
 
-최종 A 구조에서 Spring Boot는 아래 주소로 요청합니다.
+백엔드는 아래 주소로 원본 이미지를 전송합니다.
 
 ```text
-POST http://AI서버IP:8000/analyze
+POST http://AI서버주소:8010/analyze
 ```
 
-전송 필드는 `image` 원본 이미지 파일입니다.
+백엔드는 응답의 `objects` 배열을 받아 각 객체별 `vlm.itemCode`, `vlm.states`, `bbox`를 사용자 확인 화면에 연결합니다.
 
-AI-2 단독 테스트가 필요하면 아래 주소를 사용합니다.
+사용자 확인이 끝나면 `finalResult` 또는 별도 V2 JSON의 `objects[].itemCode`, `objects[].states`를 Rule DB 판단에 사용합니다.
 
-```text
-POST http://AI서버IP:8000/analyze-ai2
-```
+### resultSource 값
 
-전송 필드는 `crop`, `yolo_json`입니다.
+V2의 `resultSource`는 최종 결과가 어디에서 확정됐는지 나타냅니다.
 
-다른 노트북에서 호출할 때는 `localhost`가 아니라 AI 서버가 실행 중인 노트북의 IPv4 주소를 사용해야 합니다.
+| 값 | 의미 |
+| --- | --- |
+| `VLM_LOW` | GPT Vision low 분석 결과를 그대로 사용 |
+| `VLM_HIGH` | GPT Vision high 재분석 결과를 그대로 사용 |
+| `USER_CONFIRMED` | 사용자가 AI 결과를 수정 없이 확인 |
+| `USER_CORRECTED` | 사용자가 AI 결과의 품목 또는 상태를 수정 |
+| `USER_ADDED` | 사용자가 누락된 객체를 직접 추가 |
+
+### review.status 값
+
+V1의 `review.status`는 사용자 검증 진행 상태를 나타냅니다.
+
+| 값 | 의미 |
+| --- | --- |
+| `PENDING` | AI 분석 직후, 사용자 확인 전 |
+| `CONFIRMED` | 사용자가 AI 결과를 수정 없이 확인 |
+| `CORRECTED` | 사용자가 AI 결과의 품목 또는 상태를 수정 |
+| `ADDED` | 사용자가 누락된 객체를 직접 추가 |
