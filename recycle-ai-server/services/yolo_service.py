@@ -10,8 +10,12 @@ from ultralytics import YOLO
 load_dotenv()
 
 CLASS_TO_ITEM = {
-    "clear_pet_bottle": {"categoryCode": "PET_BOTTLE"},
-    "colored_pet_bottle": {"categoryCode": "PET_BOTTLE"},
+    # 2026-09-10 재학습된 모델의 실제 클래스명은 "pet_bottle_clear"/"pet_bottle_colored"
+    # 순서 (data.yaml 기준) - "clear_pet_bottle"이 아님. 아래 fallback(_class_to_category_code의
+    # "pet"+"bottle" 부분 문자열 매칭)이 있어서 카테고리 분류 자체는 깨지지 않았지만,
+    # 정확한 이름을 넣어둬야 나중에 다른 곳에서 이 dict를 직접 참조해도 안전함.
+    "pet_bottle_clear": {"categoryCode": "PET_BOTTLE"},
+    "pet_bottle_colored": {"categoryCode": "PET_BOTTLE"},
     "pet_bottle": {"categoryCode": "PET_BOTTLE"},
     "plastic_container": {"categoryCode": "PLASTIC_CONTAINER"},
     "can": {"categoryCode": "CAN"},
@@ -23,8 +27,8 @@ CLASS_TO_ITEM = {
 }
 
 YOLO_TRANSPARENCY_HINT = {
-    "clear_pet_bottle": "true",
-    "colored_pet_bottle": "false",
+    "pet_bottle_clear": "true",
+    "pet_bottle_colored": "false",
 }
 
 DEBUG_MAX_DETECTIONS = 20
@@ -280,8 +284,8 @@ def debug_yolo_detection(
         "modelClasses": model.names,
         "supportsTransparencyClasses": supports_transparency_classes,
         "transparencyRule": {
-            "clear_pet_bottle": "isTransparent=true",
-            "colored_pet_bottle": "isTransparent=false",
+            "pet_bottle_clear": "isTransparent=true",
+            "pet_bottle_colored": "isTransparent=false",
             "pet_bottle": "isTransparent is judged by GPT Vision fallback",
         },
         "imageSize": {"width": image.size[0], "height": image.size[1]},

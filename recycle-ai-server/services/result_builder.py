@@ -1,3 +1,5 @@
+# /finalize 도입에 맞춰 additionalObjects를 V1 스펙(itemCode/confidence/bbox/states)으로 정규화하는
+# _normalize_additional_objects를 추가함 (기존엔 missedObjects를 형식 검증 없이 그대로 내보냈음).
 from typing import Any
 
 from schemas.analysis_schema import normalize_checklist_results, normalize_states
@@ -22,9 +24,13 @@ ALLOWED_RESULT_SOURCES = {
     RESULT_SOURCE_USER_ADDED,
 }
 
+# 2026-09-10 재학습된 pet_bottle_clear_colored_v2 모델의 실제 클래스명(data.yaml 기준)은
+# "clear_pet_bottle"이 아니라 "pet_bottle_clear"/"pet_bottle_colored" 순서라, 이전에 가정했던
+# 이름으로는 항상 매칭 실패해서 isTransparent가 GPT Vision 폴백으로만 갔음 - 실제 학습 결과
+# 클래스명에 맞춰 수정함.
 YOLO_TRANSPARENCY_BY_CLASS = {
-    "clear_pet_bottle": "true",
-    "colored_pet_bottle": "false",
+    "pet_bottle_clear": "true",
+    "pet_bottle_colored": "false",
 }
 
 
@@ -135,6 +141,31 @@ def _bbox_to_object(bbox: Any) -> dict[str, int] | None:
 
 def _states_from_checklist(checklist_results: list[dict[str, Any]]) -> dict[str, bool | None]:
     return normalize_states({"checklistResults": checklist_results})
+
+
+def _normalize_additional_objects(raw_missed_objects: Any) -> list[dict[str, Any]]:
+    """
+    vlm_result.missedObjects(자유 형식) -> V1 additionalObjects 스펙(itemCode/confidence/bbox/states)으로 정규화.
+    """
+    if not isinstance(raw_missed_objects, list):
+        return []
+
+    normalized: list[dict[str, Any]] = []
+    for item in raw_missed_objects:
+        if not isinstance(item, dict):
+            continue
+
+        confidence_raw = item.get("categoryConfidence")
+        normalized.append(
+            {
+                "itemCode": str(item.get("categoryCode") or "UNKNOWN"),
+                "confidence": float(confidence_raw) if confidence_raw is not None else None,
+                "bbox": _bbox_to_object(item.get("bbox")),
+                "states": _states_from_checklist(normalize_checklist_results(item)),
+            }
+        )
+
+    return normalized
 
 
 def _result_source_from_level(current_level: Any) -> str:
@@ -336,7 +367,7 @@ def build_multi_object_analysis_result(
             "highTriggerReasons": high_trigger_reasons,
         },
         "objects": output_objects,
-        "additionalObjects": vlm_result.get("missedObjects") or [],
+        "additionalObjects": _normalize_additional_objects(vlm_result.get("missedObjects")),
     }
 
 
