@@ -9,6 +9,8 @@ from ultralytics import YOLO
 
 load_dotenv()
 
+# 2026-09-15 공식 클래스명 규칙표 반영 - "plastic_container"/"pet_bottle_colored"는 별도 등록
+# 클래스명에서 빠지고 "plastic" 하나로 통합됨(유색 페트병 포함 이외 모든 플라스틱).
 CLASS_TO_ITEM = {
     # 2026-09-10 저녁 "규칙 수집" 최종안 반영 - PET_BOTTLE이라는 단일 품목이 아니라
     # 무색 투명 생수·음료 페트병만 별도배출 대상(CLEAR_PET_BOTTLE)이고, 유색 페트병과
@@ -17,12 +19,14 @@ CLASS_TO_ITEM = {
     # 재학습된 모델의 실제 클래스명은 "pet_bottle_clear"/"pet_bottle_colored" 순서
     # (data.yaml 기준) - "clear_pet_bottle"이 아님.
     "pet_bottle_clear": {"categoryCode": "CLEAR_PET_BOTTLE"},
-    "pet_bottle_colored": {"categoryCode": "PLASTIC"},
+    # "pet_bottle_colored"는 공식 클래스명표에서 빠졌지만, 지금 배포된 모델은 여전히 이 이름을
+    # 그대로 출력함 - 아래 _class_to_category_code()의 "pet"+"bottle" 포함 시 PLASTIC 폴백이
+    # 이 이름도 그대로 잡아주므로 키를 안 남겨도 안전함 (재학습 전까지는 이 폴백에 의존).
     # 구버전 단일클래스 모델이 내보내던 이름(투명/유색 구분 불가) - 잘못 구분해서 별도배출
     # 대상이 아닌 걸 별도배출로 안내하는 것보다, 그냥 일반 플라스틱류로 안내하는 쪽이
     # 안전한 기본값이라 PLASTIC으로 둠.
     "pet_bottle": {"categoryCode": "PLASTIC"},
-    "plastic_container": {"categoryCode": "PLASTIC"},
+    "plastic": {"categoryCode": "PLASTIC"},
     "can": {"categoryCode": "CAN"},
     "glass_bottle": {"categoryCode": "GLASS_BOTTLE"},
     "paper": {"categoryCode": "PAPER"},
