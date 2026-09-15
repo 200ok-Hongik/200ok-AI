@@ -49,13 +49,16 @@ def build_analysis_result(
     """
     Legacy V1.0.3 single-crop result for /analyze-ai2 compatibility.
     """
-    item_code = str(yolo_result.get("itemCode") or yolo_result.get("categoryCode") or "PET_BOTTLE")
+    # 기본값 PLASTIC: "규칙 수집" 최종안 기준 무색 투명 페트병(CLEAR_PET_BOTTLE)만 별도배출
+    # 대상이고 나머지는 전부 일반 플라스틱류라, 뭔지 모를 때 PLASTIC이 더 안전한 기본값임
+    # (반대로 하면 유색 병을 별도배출 대상이라고 잘못 안내하게 됨).
+    item_code = str(yolo_result.get("itemCode") or yolo_result.get("categoryCode") or "PLASTIC")
     category_confidence = float(yolo_result.get("confidence") or state_result.get("categoryConfidence") or 0.0)
     yolo_class = str(yolo_result.get("yoloClass") or "")
     yolo_transparency = _get_yolo_transparency(yolo_class)
 
     check_items = []
-    for item in normalize_checklist_results(state_result):
+    for item in normalize_checklist_results(state_result, category_code=item_code):
         status_value = item["statusValue"]
         confidence = item["confidence"]
 
@@ -86,7 +89,10 @@ def build_rule_input(analysis_result: dict[str, Any], region_code: str | None = 
     """
     rule_input: dict[str, Any] = {
         "categoryCode": analysis_result["categoryCode"],
-        "states": normalize_states({"checklistResults": analysis_result.get("checkItems", [])}),
+        "states": normalize_states(
+            {"checklistResults": analysis_result.get("checkItems", [])},
+            category_code=analysis_result["categoryCode"],
+        ),
     }
 
     if region_code:
@@ -139,8 +145,10 @@ def _bbox_to_object(bbox: Any) -> dict[str, int] | None:
     return None
 
 
-def _states_from_checklist(checklist_results: list[dict[str, Any]]) -> dict[str, bool | None]:
-    return normalize_states({"checklistResults": checklist_results})
+def _states_from_checklist(
+    checklist_results: list[dict[str, Any]], category_code: str | None = None
+) -> dict[str, bool | None]:
+    return normalize_states({"checklistResults": checklist_results}, category_code=category_code)
 
 
 def _normalize_additional_objects(raw_missed_objects: Any) -> list[dict[str, Any]]:
@@ -156,12 +164,15 @@ def _normalize_additional_objects(raw_missed_objects: Any) -> list[dict[str, Any
             continue
 
         confidence_raw = item.get("categoryConfidence")
+        item_code = str(item.get("categoryCode") or "UNKNOWN")
         normalized.append(
             {
-                "itemCode": str(item.get("categoryCode") or "UNKNOWN"),
+                "itemCode": item_code,
                 "confidence": float(confidence_raw) if confidence_raw is not None else None,
                 "bbox": _bbox_to_object(item.get("bbox")),
-                "states": _states_from_checklist(normalize_checklist_results(item)),
+                "states": _states_from_checklist(
+                    normalize_checklist_results(item, category_code=item_code), category_code=item_code
+                ),
             }
         )
 
@@ -236,7 +247,8 @@ def should_reanalyze_high(
         if vlm_object.get("yoloCategoryMatches") is False:
             reasons.append(_reason("YOLO_VLM_ITEM_MISMATCH", object_id))
 
-        for checklist_item in normalize_checklist_results(vlm_object):
+        checklist_category_code = vlm_item_code or yolo_item_code
+        for checklist_item in normalize_checklist_results(vlm_object, category_code=checklist_category_code):
             if checklist_item["statusValue"] is None:
                 reasons.append(_reason("REQUIRED_STATE_NULL", object_id, checklist_item["checkItemName"]))
 
@@ -307,10 +319,12 @@ def build_multi_object_analysis_result(
         normalized_object_id = _make_object_id(object_id)
         item_code = str(vlm_object.get("categoryCode") or yolo_object.get("categoryCode") or "UNKNOWN")
         item_confidence = float(vlm_object.get("categoryConfidence") or yolo_object.get("confidence") or 0.0)
-        checklist_results = normalize_checklist_results(vlm_object)
+        checklist_results = normalize_checklist_results(vlm_object, category_code=item_code)
         yolo_transparency = _get_yolo_transparency(str(yolo_object.get("yoloClass") or ""))
 
-        if yolo_transparency is not None and item_code == "PET_BOTTLE":
+        # CLEAR_PET_BOTTLE(무색 투명 페트병)과 PLASTIC(유색 페트병 포함 일반 플라스틱) 둘 다
+        # YOLO clear/colored 판정으로 isTransparent를 신뢰할 수 있어서 둘 다 검사함.
+        if yolo_transparency is not None and item_code in ("CLEAR_PET_BOTTLE", "PLASTIC"):
             for checklist_item in checklist_results:
                 if checklist_item["checkItemName"] == "isTransparent":
                     checklist_item["statusValue"] = yolo_transparency
@@ -330,7 +344,7 @@ def build_multi_object_analysis_result(
                 "vlm": {
                     "itemCode": item_code,
                     "confidence": round(item_confidence, 3),
-                    "states": _states_from_checklist(checklist_results),
+                    "states": _states_from_checklist(checklist_results, category_code=item_code),
                     "yoloItemMatches": vlm_object.get("yoloCategoryMatches"),
                     "multipleObjectsInBox": vlm_object.get("bboxHasMultipleObjects"),
                     "hasUnlabeledNearbyObject": vlm_object.get("hasUnlabeledNearbyObject"),

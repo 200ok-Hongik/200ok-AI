@@ -10,14 +10,19 @@ from ultralytics import YOLO
 load_dotenv()
 
 CLASS_TO_ITEM = {
-    # 2026-09-10 재학습된 모델의 실제 클래스명은 "pet_bottle_clear"/"pet_bottle_colored"
-    # 순서 (data.yaml 기준) - "clear_pet_bottle"이 아님. 아래 fallback(_class_to_category_code의
-    # "pet"+"bottle" 부분 문자열 매칭)이 있어서 카테고리 분류 자체는 깨지지 않았지만,
-    # 정확한 이름을 넣어둬야 나중에 다른 곳에서 이 dict를 직접 참조해도 안전함.
-    "pet_bottle_clear": {"categoryCode": "PET_BOTTLE"},
-    "pet_bottle_colored": {"categoryCode": "PET_BOTTLE"},
-    "pet_bottle": {"categoryCode": "PET_BOTTLE"},
-    "plastic_container": {"categoryCode": "PLASTIC_CONTAINER"},
+    # 2026-09-10 저녁 "규칙 수집" 최종안 반영 - PET_BOTTLE이라는 단일 품목이 아니라
+    # 무색 투명 생수·음료 페트병만 별도배출 대상(CLEAR_PET_BOTTLE)이고, 유색 페트병과
+    # 그 외 일반 플라스틱 용기는 전부 PLASTIC 하나로 합쳐서 배출함 - 실제 분리배출
+    # 기준이 그렇게 돼있음(무색 아니면 다 일반 플라스틱류).
+    # 재학습된 모델의 실제 클래스명은 "pet_bottle_clear"/"pet_bottle_colored" 순서
+    # (data.yaml 기준) - "clear_pet_bottle"이 아님.
+    "pet_bottle_clear": {"categoryCode": "CLEAR_PET_BOTTLE"},
+    "pet_bottle_colored": {"categoryCode": "PLASTIC"},
+    # 구버전 단일클래스 모델이 내보내던 이름(투명/유색 구분 불가) - 잘못 구분해서 별도배출
+    # 대상이 아닌 걸 별도배출로 안내하는 것보다, 그냥 일반 플라스틱류로 안내하는 쪽이
+    # 안전한 기본값이라 PLASTIC으로 둠.
+    "pet_bottle": {"categoryCode": "PLASTIC"},
+    "plastic_container": {"categoryCode": "PLASTIC"},
     "can": {"categoryCode": "CAN"},
     "glass_bottle": {"categoryCode": "GLASS_BOTTLE"},
     "paper": {"categoryCode": "PAPER"},
@@ -82,7 +87,8 @@ def _class_to_category_code(yolo_class: str) -> str:
 
     lowered = yolo_class.lower()
     if "pet" in lowered and "bottle" in lowered:
-        return "PET_BOTTLE"
+        # 투명/유색 구분이 안 되는 이름이면 CLASS_TO_ITEM처럼 안전한 기본값(PLASTIC)으로.
+        return "PLASTIC"
 
     return "UNKNOWN"
 
