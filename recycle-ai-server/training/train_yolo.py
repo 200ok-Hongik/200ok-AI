@@ -54,8 +54,19 @@ from ultralytics import YOLO
 # ── 품목별로 바꾸는 값 ──
 # 통합 모델에 포함시킬 품목 폴더 목록. 폴더 ID는 공유 링크의 /folders/ 뒤 부분.
 # 새 품목 생기면 이 리스트에 한 줄만 추가하면 됨 (순서는 상관없음).
+#
+# [2026-09-16] name_remap: yolo_direct_v2/data.yaml의 로컬 클래스명이 아직 "규칙 수집"
+# 전역 이름(CLEAR_PET_BOTTLE/PLASTIC)이 아니라 옛 이름(pet_bottle_clear/pet_bottle_colored)임.
+# can_v1처럼 새로 준비되는 폴더는 data.yaml에 이미 전역 이름을 쓰는데, pet_bottle만 이대로
+# 두면 _merge_datasets가 이름이 다르다고 보고 클래스를 따로 쪼갬(9개로 잘못 나뉨).
+# Drive 원본 data.yaml은 팀원(유영주) 소유 데이터라 여기서 고치지 않고, 병합 시에만
+# 이 매핑으로 전역 이름으로 바꿔서 읽는다.
 DATASET_FOLDERS = [
-    {"id": "11bNM4kGP991WVJCiit1vMz-xEwib0tKK", "name": "pet_bottle"},
+    {
+        "id": "11bNM4kGP991WVJCiit1vMz-xEwib0tKK",
+        "name": "pet_bottle",
+        "name_remap": {"pet_bottle_clear": "CLEAR_PET_BOTTLE", "pet_bottle_colored": "PLASTIC"},
+    },
     # {"id": "<유리병 폴더 ID>", "name": "glass_bottle"},
 ]
 RUN_NAME = "recycle_unified_v1"
@@ -160,14 +171,17 @@ def _download_one_item(service, folder_id: str, dest_dir: Path) -> None:
     print(f"  {dest_dir.name}: 다운로드 완료.")
 
 
-def _load_local_names(item_dir: Path) -> list[str]:
+def _load_local_names(item_dir: Path, name_remap: dict[str, str] | None = None) -> list[str]:
     with open(item_dir / "data.yaml", encoding="utf-8") as f:
         data = yaml.safe_load(f)
     names = data["names"]
-    return list(names.values()) if isinstance(names, dict) else list(names)
+    local_names = list(names.values()) if isinstance(names, dict) else list(names)
+    if name_remap:
+        local_names = [name_remap.get(name, name) for name in local_names]
+    return local_names
 
 
-def _merge_datasets(item_names: list[str]) -> Path:
+def _merge_datasets(dataset_folders: list[dict]) -> Path:
     # 품목마다 로컬 클래스 인덱스(0-based)가 따로 있어서, 전역 클래스 목록을 새로 만들고
     # 각 품목의 로컬 인덱스 -> 전역 인덱스 매핑으로 라벨 파일의 클래스 번호를 다시 씀.
     if MERGED_DATASET_DIR.exists():
@@ -178,9 +192,10 @@ def _merge_datasets(item_names: list[str]) -> Path:
 
     global_names: list[str] = []
 
-    for item_name in item_names:
+    for folder in dataset_folders:
+        item_name = folder["name"]
         item_dir = RAW_DIR / item_name
-        local_names = _load_local_names(item_dir)
+        local_names = _load_local_names(item_dir, name_remap=folder.get("name_remap"))
 
         local_to_global: dict[int, int] = {}
         for local_id, name in enumerate(local_names):
@@ -244,7 +259,7 @@ def main() -> None:
         _download_one_item(service, folder["id"], RAW_DIR / folder["name"])
 
     print("전역 클래스로 병합 중...")
-    data_yaml_path = _merge_datasets([folder["name"] for folder in DATASET_FOLDERS])
+    data_yaml_path = _merge_datasets(DATASET_FOLDERS)
 
     model = YOLO("yolov8n.pt")
     model.train(
