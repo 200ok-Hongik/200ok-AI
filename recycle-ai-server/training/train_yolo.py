@@ -55,19 +55,22 @@ from ultralytics import YOLO
 # 통합 모델에 포함시킬 품목 폴더 목록. 폴더 ID는 공유 링크의 /folders/ 뒤 부분.
 # 새 품목 생기면 이 리스트에 한 줄만 추가하면 됨 (순서는 상관없음).
 #
-# [2026-09-16] name_remap: yolo_direct_v2/data.yaml의 로컬 클래스명이 아직 "규칙 수집"
-# 전역 이름(CLEAR_PET_BOTTLE/PLASTIC)이 아니라 옛 이름(pet_bottle_clear/pet_bottle_colored)임.
-# can_v1처럼 새로 준비되는 폴더는 data.yaml에 이미 전역 이름을 쓰는데, pet_bottle만 이대로
-# 두면 _merge_datasets가 이름이 다르다고 보고 클래스를 따로 쪼갬(9개로 잘못 나뉨).
-# Drive 원본 data.yaml은 팀원(유영주) 소유 데이터라 여기서 고치지 않고, 병합 시에만
-# 이 매핑으로 전역 이름으로 바꿔서 읽는다.
+# [2026-09-22] yolo_direct_v2(옛 pet_bottle, pet_bottle_clear/pet_bottle_colored 로컬 이름)는
+# clear_pet_bottle_v1/plastic_v1로 대체됐음이 09-21 세션에서 확인돼서 제거함 - 둘 다 남기면
+# 같은 클래스 데이터가 중복으로 섞여 들어감. 아래 8개는 recycle_training_data/ 밑에서
+# data.yaml이 이미 전역 이름(CLEAR_PET_BOTTLE/PLASTIC/CAN/GLASS_BOTTLE/VINYL/PAPER/STYROFOAM/
+# PAPER_PACK)을 쓰고 있어서 name_remap이 필요 없음 (서비스 계정 API로 실제 폴더 ID 조회 +
+# data.yaml/라벨 클래스 인덱스까지 직접 확인함).
+# paper_v1/styrofoam_v1/paper_pack_v1은 09-22 업로드 완료 확인 후 등록.
 DATASET_FOLDERS = [
-    {
-        "id": "11bNM4kGP991WVJCiit1vMz-xEwib0tKK",
-        "name": "pet_bottle",
-        "name_remap": {"pet_bottle_clear": "CLEAR_PET_BOTTLE", "pet_bottle_colored": "PLASTIC"},
-    },
-    # {"id": "<유리병 폴더 ID>", "name": "glass_bottle"},
+    {"id": "1w2U1fRcaC-i4FiyAEDCWzjcy9b7vRe5q", "name": "clear_pet_bottle"},
+    {"id": "1U7-roBW_Da60mv_NKNor0cmyDo-QFZRY", "name": "plastic"},
+    {"id": "1Fx_E0S4-mEBzaeOPeJkLo4aqPZEvTwJz", "name": "can"},
+    {"id": "1stAyPAFyfaUUuPVAdkxZpvEcD4pe9d4u", "name": "glass_bottle"},
+    {"id": "1bJUnDeyo6RGGQ8xHKhP1XIIO8NxA08_q", "name": "vinyl"},
+    {"id": "1tfk6yJwn5xB7nd7EeGUxCLflQmBksXPu", "name": "paper"},
+    {"id": "1ligVYT__-LpJcdzLTFjK7iK4BmtOw7v4", "name": "styrofoam"},
+    {"id": "1Wv5hm0m3Vj0k8Ufm-CL0XPlx1VOsYop1", "name": "paper_pack"},
 ]
 RUN_NAME = "recycle_unified_v1"
 
