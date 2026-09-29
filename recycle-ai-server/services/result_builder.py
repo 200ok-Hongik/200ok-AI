@@ -30,6 +30,8 @@ ALLOWED_RESULT_SOURCES = {
 # 클래스명에 맞춰 수정함.
 YOLO_TRANSPARENCY_BY_CLASS = {
     "pet_bottle_clear": "true",
+    # 2026-09-27 8클래스 통합 모델의 무색 페트병 클래스명(소문자로 조회). 무색 클래스이므로 투명=true.
+    "clear_pet_bottle": "true",
     "pet_bottle_colored": "false",
 }
 
@@ -39,7 +41,8 @@ def _get_yolo_transparency(yolo_class: str) -> str | None:
     Only clear/colored YOLO classes are trusted for transparency.
     Generic pet_bottle means GPT Vision keeps responsibility for isTransparent.
     """
-    return YOLO_TRANSPARENCY_BY_CLASS.get(yolo_class)
+    # 2026-09-27 통합 모델은 대문자 클래스명을 내보내므로 소문자로 통일해서 조회함
+    return YOLO_TRANSPARENCY_BY_CLASS.get(yolo_class.lower())
 
 
 def build_analysis_result(

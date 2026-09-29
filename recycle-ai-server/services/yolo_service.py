@@ -1,3 +1,6 @@
+# 2026-09-27 변경 요약: 8클래스 통합 모델(best.pt, 클래스명이 대문자 CLEAR_PET_BOTTLE/PLASTIC/CAN/
+# GLASS_BOTTLE/VINYL/PAPER/STYROFOAM/PAPER_PACK)을 붙이기 위해 클래스명 조회를 대소문자 무관하게
+# 바꾸고 clear_pet_bottle 별칭을 추가함. (이전엔 대문자 이름이 매핑에서 빠져 전부 UNKNOWN으로 나옴)
 import io
 import os
 from pathlib import Path
@@ -19,6 +22,9 @@ CLASS_TO_ITEM = {
     # 재학습된 모델의 실제 클래스명은 "pet_bottle_clear"/"pet_bottle_colored" 순서
     # (data.yaml 기준) - "clear_pet_bottle"이 아님.
     "pet_bottle_clear": {"categoryCode": "CLEAR_PET_BOTTLE"},
+    # 2026-09-27 8클래스 통합 모델의 무색 페트병 클래스명(data.yaml 기준 CLEAR_PET_BOTTLE).
+    # 조회 시 소문자로 바꾸므로 키는 소문자로 둠.
+    "clear_pet_bottle": {"categoryCode": "CLEAR_PET_BOTTLE"},
     # "pet_bottle_colored"는 공식 클래스명표에서 빠졌지만, 지금 배포된 모델은 여전히 이 이름을
     # 그대로 출력함 - 아래 _class_to_category_code()의 "pet"+"bottle" 포함 시 PLASTIC 폴백이
     # 이 이름도 그대로 잡아주므로 키를 안 남겨도 안전함 (재학습 전까지는 이 폴백에 의존).
@@ -37,6 +43,7 @@ CLASS_TO_ITEM = {
 
 YOLO_TRANSPARENCY_HINT = {
     "pet_bottle_clear": "true",
+    "clear_pet_bottle": "true",  # 2026-09-27 통합 모델 클래스명(디버그 힌트용, 소문자)
     "pet_bottle_colored": "false",
 }
 
@@ -85,7 +92,8 @@ def _to_jpeg_bytes(image: Image.Image) -> bytes:
 
 
 def _class_to_category_code(yolo_class: str) -> str:
-    item_info = CLASS_TO_ITEM.get(yolo_class)
+    # 2026-09-27 통합 모델은 대문자 클래스명을 내보내므로 소문자로 통일해서 조회함(이전엔 대문자가 매칭 안 돼 UNKNOWN)
+    item_info = CLASS_TO_ITEM.get(yolo_class.lower())
     if item_info:
         return item_info["categoryCode"]
 
