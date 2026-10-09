@@ -38,6 +38,16 @@ YOLO_IMG_SIZE=640
 YOLO_CONF_THRESHOLD=0.25
 ```
 
+선택 환경변수 (없으면 아래 기본값 사용, 2026-10-09 분석 속도 개선 때 추가):
+
+```text
+OPENAI_REASONING_EFFORT=low     # GPT 추론 강도. 상태 판단이 이상하면 medium으로 올리거나 값을 비우면(모델 기본값) 이전 동작
+OPENAI_TIMEOUT_SECONDS=120      # 60으로 두면 오래 걸리는 요청이 타임아웃 후 처음부터 재시도돼서 오히려 느려짐
+OPENAI_MAX_RETRIES=1
+```
+
+EC2의 .env에 OPENAI_TIMEOUT_SECONDS=60이 남아 있으면 기본값(120)보다 우선하므로 120으로 바꾸거나 줄을 지웁니다.
+
 주의:
 
 ```text
@@ -106,6 +116,11 @@ tar xzf ai-main.tar.gz && rm ai-main.tar.gz
 docker compose up -d --build
 curl http://localhost:8000/health
 ```
+
+문제가 생겨 이전 버전으로 되돌릴 때:
+
+- 설정만 되돌리기: EC2의 `.env`에서 값을 바꾸고 `docker compose up -d` (컨테이너가 새 설정으로 다시 뜸)
+- 코드 되돌리기: 로컬에서 되돌릴 커밋을 지정해 위 1~3단계를 똑같이 진행 (예: `git archive --format=tar.gz -o ai-main.tar.gz <이전 커밋 해시>`)
 
 로그 확인:
 
