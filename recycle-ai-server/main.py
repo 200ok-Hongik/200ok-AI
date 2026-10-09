@@ -1,3 +1,6 @@
+# 2026-10-09: /analyze 응답의 물체 요약(objectId/탐지 주체/YOLO 클래스/GPT 품목·이름/bbox)과 HIGH 재분석 이유를
+# 서버 로그에 남기도록 _log_analysis_summary 추가 - 응답 본문이 로그에 없어 앱 화면 없이는 중복·오인식 원인을
+# 알 수 없었기 때문. 사진·상태값·키 같은 민감/대용량 정보는 남기지 않음.
 import json
 import logging
 import time
@@ -34,6 +37,27 @@ def health() -> dict[str, str]:
 
 def _elapsed_ms(started_at: float) -> int:
     return round((time.perf_counter() - started_at) * 1000)
+
+
+def _log_analysis_summary(analysis_result: dict[str, Any], high_reasons: list[dict[str, Any]]) -> None:
+    """물체마다 한 줄씩 요약을 남긴다 - YOLO 중복인지 GPT 추가 탐지인지 로그만으로 구분하기 위함."""
+    if high_reasons:
+        logger.info("analysis high_reasons=%s", sorted({r.get("code") for r in high_reasons if r.get("code")}))
+    for item in analysis_result.get("objects", []):
+        yolo = item.get("yolo") or {}
+        vlm = item.get("vlm") or {}
+        logger.info(
+            "analysis object id=%s by=%s yolo=%s(%s) vlm=%s name=%s bbox=%s",
+            item.get("objectId"),
+            item.get("detectedBy"),
+            yolo.get("className"),
+            yolo.get("confidence"),
+            vlm.get("itemCode"),
+            vlm.get("objectName"),
+            item.get("bbox"),
+        )
+    for extra in analysis_result.get("additionalObjects", []):
+        logger.info("analysis additional item=%s name=%s bbox=None", extra.get("itemCode"), extra.get("objectName"))
 
 
 @app.post("/analyze")
@@ -98,6 +122,7 @@ async def analyze_full_pipeline(
             image_id=image_id,
         )
         logger.info("analysis build_result_ms=%s", _elapsed_ms(build_started_at))
+        _log_analysis_summary(analysis_result, low_review_reasons)
 
         if rule_input_only:
             logger.info("analysis completed total_ms=%s response=v2", _elapsed_ms(total_started_at))
