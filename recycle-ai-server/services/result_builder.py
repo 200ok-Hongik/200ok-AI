@@ -1,8 +1,12 @@
+# 2026-10-09: YOLO가 못 찾고 GPT만 찾은 물체(missedObjects - 종이컵 안의 빨대, 학습 안 된 품목 등)를
+# additionalObjects로 따로 빼지 않고 objects에 object_N 번호를 이어 붙여 넣도록 변경함(_promote_missed_objects).
+# 8품목 밖이면 itemCode=UNKNOWN + GPT가 본 이름(objectName)을 같이 보내서 사용자가 품목을 고르게 함.
+# bbox가 없거나 비정상인 것만 additionalObjects에 남김 - 백엔드 검증이 objects[].bbox를 필수로 요구하기 때문.
 # /finalize 도입에 맞춰 additionalObjects를 V1 스펙(itemCode/confidence/bbox/states)으로 정규화하는
 # _normalize_additional_objects를 추가함 (기존엔 missedObjects를 형식 검증 없이 그대로 내보냈음).
 from typing import Any
 
-from schemas.analysis_schema import normalize_checklist_results, normalize_states
+from schemas.analysis_schema import CATEGORY_STATE_FIELDS, normalize_checklist_results, normalize_states
 
 MODEL_VERSION = "v1.0.3"
 MULTI_OBJECT_MODEL_VERSION = "v1.1.0"
@@ -168,9 +172,13 @@ def _normalize_additional_objects(raw_missed_objects: Any) -> list[dict[str, Any
 
         confidence_raw = item.get("categoryConfidence")
         item_code = str(item.get("categoryCode") or "UNKNOWN")
+        # 8품목 밖의 코드를 GPT가 지어내면 상태 필드/규칙 매칭이 안 되므로 UNKNOWN으로 묶어 사용자 선택에 맡김
+        if item_code not in CATEGORY_STATE_FIELDS:
+            item_code = "UNKNOWN"
         normalized.append(
             {
                 "itemCode": item_code,
+                "objectName": item.get("objectName"),
                 "confidence": float(confidence_raw) if confidence_raw is not None else None,
                 "bbox": _bbox_to_object(item.get("bbox")),
                 "states": _states_from_checklist(
@@ -180,6 +188,82 @@ def _normalize_additional_objects(raw_missed_objects: Any) -> list[dict[str, Any
         )
 
     return normalized
+
+
+def _clamp_valid_bbox(bbox: dict[str, int] | None, image_size: dict[str, Any]) -> dict[str, int] | None:
+    """GPT가 추정한 bbox를 이미지 범위로 자르고, 넓이가 없으면 None (백엔드 bbox 검증 통과용)."""
+    if not bbox:
+        return None
+    width = image_size.get("width")
+    height = image_size.get("height")
+    x_min, y_min = max(0, bbox["xMin"]), max(0, bbox["yMin"])
+    x_max, y_max = bbox["xMax"], bbox["yMax"]
+    # GPT 좌표는 추정치라 이미지 밖으로 나갈 수 있어서 실제 이미지 크기로 자름
+    if isinstance(width, int):
+        x_max = min(x_max, width)
+    if isinstance(height, int):
+        y_max = min(y_max, height)
+    if x_max <= x_min or y_max <= y_min:
+        return None
+    return {"xMin": x_min, "yMin": y_min, "xMax": x_max, "yMax": y_max}
+
+
+def _promote_missed_objects(
+    missed_objects: list[dict[str, Any]],
+    next_number: int,
+    image_size: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """
+    정규화된 missedObjects 중 bbox가 있는 것을 objects 항목(object_N)으로 바꾼다.
+    반환: (objects에 이어 붙일 항목들, bbox가 없어 additionalObjects에 남길 항목들)
+    """
+    promoted: list[dict[str, Any]] = []
+    remaining: list[dict[str, Any]] = []
+
+    for missed in missed_objects:
+        bbox = _clamp_valid_bbox(missed.get("bbox"), image_size)
+        if bbox is None:
+            remaining.append(missed)
+            continue
+
+        object_id = f"object_{next_number}"
+        next_number += 1
+        # 품목을 모르면 판단할 상태 필드도 없음 - 기본(페트병) 필드 6개가 전부 null로 붙는 걸 막고 빈 상태로 보냄.
+        # 사용자가 품목을 고른 뒤 그 품목의 상태를 채운다.
+        states = {} if missed["itemCode"] == "UNKNOWN" else (missed.get("states") or {})
+
+        # YOLO 검증 없이 GPT 단독 판단이라 품목이 무엇이든 항상 사용자 확인 대상으로 둔다
+        review_reasons = [_reason("ADDITIONAL_OBJECT_FOUND", object_id)]
+        if missed["itemCode"] == "UNKNOWN":
+            review_reasons.append(_reason("UNKNOWN_ITEM", object_id))
+        review_reasons += [
+            _reason("REQUIRED_STATE_NULL", object_id, field) for field, value in states.items() if value is None
+        ]
+
+        promoted.append(
+            {
+                "objectId": object_id,
+                "bbox": bbox,
+                "detectedBy": "VLM",
+                "yolo": {"itemCode": None, "className": None, "confidence": None},
+                "vlm": {
+                    "itemCode": missed["itemCode"],
+                    "objectName": missed.get("objectName"),
+                    "confidence": missed.get("confidence"),
+                    "states": states,
+                    "yoloItemMatches": None,
+                    "multipleObjectsInBox": None,
+                    "hasUnlabeledNearbyObject": None,
+                    "isTooSmallOrBlurred": None,
+                    "needsReview": True,
+                    "reviewReasons": _dedupe_reasons(review_reasons),
+                },
+                "review": {"status": REVIEW_STATUS_PENDING},
+                "finalResult": None,
+            }
+        )
+
+    return promoted, remaining
 
 
 def _result_source_from_level(current_level: Any) -> str:
@@ -337,6 +421,7 @@ def build_multi_object_analysis_result(
             {
                 "objectId": normalized_object_id,
                 "bbox": _bbox_to_object(yolo_object.get("bbox")),
+                "detectedBy": "YOLO",
                 "yolo": {
                     "itemCode": yolo_object.get("categoryCode"),
                     "className": yolo_object.get("yoloClass"),
@@ -358,6 +443,15 @@ def build_multi_object_analysis_result(
                 "finalResult": None,
             }
         )
+
+    # YOLO 번호 다음부터 이어서 매겨야 object_N이 겹치지 않음 (YOLO가 0개면 GPT가 찾은 물체가 object_1부터)
+    used_numbers = [n for n in (_parse_object_id(o["objectId"]) for o in output_objects) if n is not None]
+    promoted_objects, additional_objects = _promote_missed_objects(
+        _normalize_additional_objects(vlm_result.get("missedObjects")),
+        next_number=max(used_numbers, default=0) + 1,
+        image_size=yolo_result.get("imageSize") or {},
+    )
+    output_objects.extend(promoted_objects)
 
     image_quality_raw = str(vlm_result.get("imageQuality") or "SUFFICIENT").upper()
     image_quality_status = "SUFFICIENT" if image_quality_raw in {"GOOD", "SUFFICIENT"} else "POOR"
@@ -382,7 +476,7 @@ def build_multi_object_analysis_result(
             "highTriggerReasons": high_trigger_reasons,
         },
         "objects": output_objects,
-        "additionalObjects": _normalize_additional_objects(vlm_result.get("missedObjects")),
+        "additionalObjects": additional_objects,
     }
 
 

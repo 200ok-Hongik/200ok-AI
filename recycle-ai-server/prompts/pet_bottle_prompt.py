@@ -1,3 +1,13 @@
+# 2026-10-09: missedObjects에 objectName(GPT가 본 물체 이름)을 추가하고, 번호 물체 안에 들어있는 물체
+# (컵 안의 빨대 등)와 8품목 밖 물체도 빠짐없이 missedObjects에 적도록 규칙 추가 - 서버가 이것들을
+# object_N으로 이어 붙여 사용자가 품목을 고르게 하기 때문(result_builder._promote_missed_objects).
+# 같은 날 테스트에서 종이컵 하나가 종이컵+플라스틱 2개로 나와서, "같은 물체 재질별 중복 금지"와
+# "배경 물건 제외" 규칙을 추가함 - missedObjects가 이제 앱 화면에 그대로 보이므로 과다 탐지를 막아야 함.
+#
+# 2026-10-09 (성능 개선 브랜치와 병합): 출력 예시의 missedObjects를 빈 배열로 두고 항목 형식은 따로 보여줌 -
+# 예시에 후보가 채워져 있으면 GPT가 그걸 따라 없는 후보를 만들어 넣는 경향이 있었음(벤치마크에서 8회 중 8회
+# '추가 후보 발견'으로 high 재분석). objectName·UNKNOWN·빨대 등 위의 기록 규칙은 그대로 유지.
+#
 # /finalize 엔드포인트 추가에 맞춰, missedObjects 항목의 출력 형식을 명시적으로 정의함
 # (기존엔 형식이 없어 GPT가 들쭉날쭉하게 응답해서 additionalObjects 정규화가 불가능했음).
 #
@@ -177,8 +187,9 @@ Crop 이미지는 사용하지 않는다.
   "missedObjects": []
 }
 
-missedObjects 항목 형식 (번호 없는 객체가 실제로 있을 때만 이 형식으로 채움):
-{"categoryCode": "CLEAR_PET_BOTTLE", "categoryConfidence": 0.8, "bbox": {"xMin": 0, "yMin": 760, "xMax": 1030, "yMax": 1430}, "checklistResults": []}
+missedObjects 항목 형식 (번호 없는 객체가 실제로 있을 때만 이 형식으로 채움, 없으면 빈 배열 []):
+{"objectName": "투명 생수병", "categoryCode": "CLEAR_PET_BOTTLE", "categoryConfidence": 0.8, "bbox": {"xMin": 0, "yMin": 760, "xMax": 1030, "yMax": 1430}, "checklistResults": []}
+{"objectName": "빨대", "categoryCode": "UNKNOWN", "categoryConfidence": 0.7, "bbox": {"xMin": 1210, "yMin": 300, "xMax": 1290, "yMax": 980}, "checklistResults": []}
 
 categoryCode 후보:
 - CLEAR_PET_BOTTLE: 무색 투명 생수·음료 페트병 (별도배출 대상 - 색이 있거나 불투명하면 안 됨)
@@ -233,11 +244,16 @@ PLASTIC이 된 건지, 아니면 원래 투명한 다른 플라스틱(컵·트�
 - YOLO 품목과 네가 판단한 품목이 다르면 yoloCategoryMatches를 false로 둬.
 - 하나의 bbox 안에 여러 객체가 있으면 bboxHasMultipleObjects를 true로 둬.
 - 번호가 없는 추가 객체를 발견하면 missedObjects에 적고 needsReview를 true로 둬.
-  단, 분리배출 대상 물체가 bbox 밖에 명확히 보일 때만 적어. 배경·손·그림자·이미 번호가 붙은 물체의 일부는 적지 마.
-  애매하거나 추가 객체가 없으면 missedObjects는 반드시 빈 배열 []로 둬.
-  missedObjects 각 항목은 categoryCode, categoryConfidence, bbox, checklistResults를 위 출력 형식과 같은 구조로 채워.
+  missedObjects 각 항목은 objectName, categoryCode, categoryConfidence, bbox, checklistResults를 위 출력 형식과 같은 구조로 채워.
+  objectName은 그 물체가 무엇인지 사용자가 알아볼 수 있는 짧은 한국어 이름이야 (예: "빨대", "종이컵", "나무젓가락").
+  추가로 적을 객체가 없거나 객체인지 애매하면 missedObjects는 반드시 빈 배열 []로 둬.
   "low" 단계에서는 위치를 정확히 특정하기 어려우면 bbox를 null로 남겨도 되지만,
   "high" 단계에서는 이미지 픽셀 좌표({"xMin":n,"yMin":n,"xMax":n,"yMax":n})를 반드시 추정해서 채워.
+- 번호 물체 안에 들어 있거나 꽂혀 있는 다른 물체(예: 컵 안의 빨대)도 따로 떨어질 수 있는 물체면 상태값으로만 처리하지 말고 missedObjects에 별도 객체로 적어.
+- 위 categoryCode 후보에 없는 물체도 빼지 말고 categoryCode를 "UNKNOWN"으로 해서 missedObjects에 적어. 사용자가 품목을 직접 고른다.
+- 같은 물체를 재질별로 나눠 두 번 적지 마 (예: 종이컵 하나를 "종이"와 "플라스틱 코팅"으로 따로 적지 말고 하나로만 적어).
+  이미 번호가 붙은 objects의 물체도 missedObjects에 다시 적지 마.
+- 배출 대상이 아닌 배경 물건(책상, 바닥, 손, 벽, 가구 등)은 missedObjects에 적지 마.
 - 객체가 너무 작거나 흐리면 isTooSmallOrBlurred를 true로 둬.
 - 이미지 품질이 부족하면 imageQuality를 "poor"로 둬.
 - 어떤 객체든 needsReview가 필요하면 최상위 needsReview도 true로 둬.

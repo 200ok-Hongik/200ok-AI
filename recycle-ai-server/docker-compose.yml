@@ -1,0 +1,13 @@
+# 2026-09-28 EC2 배포용 추가 - 백엔드(Lightsail)와 같은 방식으로 docker compose로 띄움.
+# .env는 저장소에 올리지 않고 EC2에 직접 둔다(DEPLOY.md 규칙).
+services:
+  ai-server:
+    build: .
+    container_name: recycle-ai-server
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./models:/app/models:ro
