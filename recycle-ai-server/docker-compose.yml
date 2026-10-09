@@ -1,5 +1,8 @@
 # 2026-09-28 EC2 배포용 추가 - 백엔드(Lightsail)와 같은 방식으로 docker compose로 띄움.
 # .env는 저장소에 올리지 않고 EC2에 직접 둔다(DEPLOY.md 규칙).
+# 2026-10-09: 로그 드라이버를 journald로 변경 - 기본(json-file)은 자동배포로 컨테이너가 새로 만들어질 때
+# 이전 로그가 같이 지워져서, 앱 스캔 원인 분석(진단 로그)을 나중에 못 하는 문제가 있었음.
+# journald는 EC2 시스템 로그(/var/log/journal, 디스크 영구 저장)에 남아 컨테이너 교체 후에도 조회 가능.
 services:
   ai-server:
     build: .
@@ -11,3 +14,8 @@ services:
       - .env
     volumes:
       - ./models:/app/models:ro
+    logging:
+      driver: journald
+      options:
+        # journalctl에서 이 이름으로 걸러 보기 위함 (journalctl -t recycle-ai-server)
+        tag: recycle-ai-server
