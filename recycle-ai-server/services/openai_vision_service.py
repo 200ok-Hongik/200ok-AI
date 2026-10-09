@@ -1,3 +1,5 @@
+# 2026-10-09: 프롬프트에 "현재 분석 단계: low/high"를 붙여 보내도록 변경 - 프롬프트 규칙은 단계별로 bbox 의무가
+# 다른데(high는 필수) GPT가 단계를 알 방법이 없어서, high에서도 bbox를 비우면 추가 물체가 object_N이 되지 못했음.
 import base64
 import json
 import os
@@ -148,6 +150,8 @@ def analyze_numbered_original_image(
     client = _create_client(api_key)
     prompt = (
         f"{MULTI_OBJECT_STATE_PROMPT}\n\n"
+        # detail 값이 곧 프롬프트의 "low"/"high" 단계라서 그대로 알려준다
+        f"현재 분석 단계: {detail}\n\n"
         "YOLO 객체 목록:\n"
         f"{json.dumps(yolo_objects, ensure_ascii=False, indent=2)}"
     )
