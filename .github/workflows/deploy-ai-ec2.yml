@@ -1,0 +1,98 @@
+# 2026-10-09 AI 서버 EC2 자동배포 (CD)
+# main에 recycle-ai-server/ 변경이 merge되면 GitHub Actions가 AWS SSM으로 EC2(recycle-ai-server)에
+# "코드 받기 → docker compose up -d --build → /health 확인" 명령을 보낸다.
+# - AWS 인증: OIDC(역할 recycle-ai-github-deploy, 이 저장소 main에서만 사용 가능)라 GitHub에 AWS 키를 저장하지 않는다.
+# - SSM으로 명령을 보내므로 EC2의 SSH(22) 포트를 GitHub에 열 필요가 없다.
+# - 코드 받기: 조직 설정상 Deploy key를 못 써서, 이 작업 동안만 유효한 읽기 전용 GITHUB_TOKEN을 명령에 담아
+#   EC2가 직접 fetch한다. 토큰은 .git/config에 저장하지 않고 작업이 끝나면 만료된다.
+# - .env(OpenAI 키 등)는 저장소에 없고 EC2의 ~/200ok-AI/recycle-ai-server/.env에만 있다.
+name: Deploy AI server to EC2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "recycle-ai-server/**"
+      - ".github/workflows/deploy-ai-ec2.yml"
+  workflow_dispatch: # 코드 변경 없이 다시 배포하고 싶을 때 Actions 탭에서 수동 실행 (main 브랜치 선택)
+
+permissions:
+  id-token: write # OIDC 토큰 발급 (AWS 역할 인증용)
+  contents: read # GITHUB_TOKEN을 읽기 전용으로 제한
+
+concurrency: # 배포가 겹치지 않게 한 번에 하나씩만
+  group: deploy-ai-ec2
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-2
+  INSTANCE_ID: i-0d877c92592358146
+  ROLE_ARN: arn:aws:iam::210379561794:role/recycle-ai-github-deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Send deploy command via SSM
+        id: send
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # EC2에서 ubuntu 사용자로 실행할 스크립트 (docker 그룹 권한, 홈 디렉터리 기준)
+          SCRIPT=$(cat <<'EOS'
+          set -eu
+          REPO_DIR=/home/ubuntu/200ok-AI
+          APP_DIR=$REPO_DIR/recycle-ai-server
+          URL="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # 처음 한 번: 저장소 폴더를 만들고, 기존 수동 배포 폴더의 .env를 옮겨 온다
+          if [ ! -d "$REPO_DIR/.git" ]; then git init -q "$REPO_DIR"; fi
+          cd "$REPO_DIR"
+          # 토큰이 든 URL은 이번 fetch에만 쓰고 remote 설정에 저장하지 않는다
+          git fetch -q --depth 1 "$URL" "$GITHUB_SHA"
+          git reset -q --hard FETCH_HEAD
+          if [ ! -f "$APP_DIR/.env" ] && [ -f /home/ubuntu/recycle-ai-server/.env ]; then
+            cp -p /home/ubuntu/recycle-ai-server/.env "$APP_DIR/.env"
+          fi
+          test -f "$APP_DIR/.env" || { echo ".env missing in $APP_DIR"; exit 1; }
+          cd "$APP_DIR"
+          echo "$(date -u +%FT%TZ) = ${GITHUB_SHA} (GitHub Actions run ${GITHUB_RUN_ID})" >> DEPLOYED_VERSION
+          docker compose up -d --build
+          docker image prune -f >/dev/null
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health; then echo; echo "deployed $(git rev-parse --short HEAD)"; exit 0; fi
+            sleep 5
+          done
+          echo "health check failed"; docker compose logs --tail 50; exit 1
+          EOS
+          )
+          # 변수는 EC2 쪽 셸에서 쓰도록 환경변수로 넘긴다
+          FULL="export GH_TOKEN='${GH_TOKEN}' GITHUB_REPOSITORY='${GITHUB_REPOSITORY}' GITHUB_SHA='${GITHUB_SHA}' GITHUB_RUN_ID='${GITHUB_RUN_ID}'; ${SCRIPT}"
+          PARAMS=$(jq -n --arg s "$FULL" '{commands: ["sudo -u ubuntu -H bash -c \($s | @sh)"], executionTimeout: ["1500"]}')
+          CMD_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --comment "deploy ${GITHUB_SHA::7}" \
+            --parameters "$PARAMS" \
+            --query Command.CommandId --output text)
+          echo "command_id=$CMD_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for result
+        run: |
+          # 빌드(PyTorch 포함)가 몇 분 걸릴 수 있어서 최대 25분까지 결과를 기다린다
+          STATUS=Pending
+          for i in $(seq 1 150); do
+            STATUS=$(aws ssm get-command-invocation --command-id "${{ steps.send.outputs.command_id }}" \
+              --instance-id "$INSTANCE_ID" --query Status --output text 2>/dev/null || echo Pending)
+            case "$STATUS" in Pending|InProgress|Delayed) sleep 10 ;; *) break ;; esac
+          done
+          aws ssm get-command-invocation --command-id "${{ steps.send.outputs.command_id }}" \
+            --instance-id "$INSTANCE_ID" --query '[StandardOutputContent, StandardErrorContent]' --output text | tail -60
+          echo "status: $STATUS"
+          test "$STATUS" = "Success"
