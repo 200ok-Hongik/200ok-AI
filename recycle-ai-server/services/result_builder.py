@@ -216,23 +216,32 @@ def _dedupe_reasons(reasons: list[dict[str, str | None]]) -> list[dict[str, str 
     return unique_reasons
 
 
+def _has_valid_bbox(bbox: Any) -> bool:
+    box = _bbox_to_object(bbox) if bbox is not None else None
+    return box is not None and box["xMax"] > box["xMin"] and box["yMax"] > box["yMin"]
+
+
 def should_reanalyze_high(
     yolo_result: dict[str, Any],
     vlm_result: dict[str, Any],
 ) -> tuple[bool, list[dict[str, str | None]]]:
+    """
+    low 결과를 보고 같은 이미지를 high로 다시 분석할지 결정한다.
+
+    2026-10-09 변경: 품목 판단이나 객체 위치에 영향이 있는 경우에만 high로 재분석한다.
+    - 재분석함: YOLO/VLM 품목 불일치, bbox 하나에 여러 객체, 너무 작거나 흐린 객체,
+      위치(bbox)를 아직 모르는 추가 후보 객체
+    - 재분석 안 함(결과 화면에서 사용자가 확인): VLM의 needsReview 단독, 상태값 null,
+      이미지 품질 불량, YOLO 미탐지 자체(VLM도 찾은 객체가 없으면 high로 다시 봐도 결과가 거의 같음)
+    벤치마크(bench/) 측정 결과 기존 조건으로는 low 결과가 거의 항상 high로 넘어가서
+    (8회 중 8회, 대부분 needsReview/상태값 null) 분석 시간이 약 2배가 되었음.
+    needsReview·상태값 null 정보는 객체별 vlm.reviewReasons로 그대로 응답에 남는다.
+    """
     reasons: list[dict[str, str | None]] = []
     yolo_objects = yolo_result.get("objects", [])
 
-    if not yolo_result.get("hasBbox"):
-        reasons.append(_reason("YOLO_BBOX_MISSING"))
-
-    if vlm_result.get("needsReview") is True:
-        reasons.append(_reason("VLM_NEEDS_REVIEW"))
-
-    if str(vlm_result.get("imageQuality") or "").lower() in {"poor", "bad", "low", "insufficient"}:
-        reasons.append(_reason("POOR_IMAGE_QUALITY"))
-
-    if vlm_result.get("missedObjects"):
+    missed_objects = vlm_result.get("missedObjects") or []
+    if any(isinstance(item, dict) and not _has_valid_bbox(item.get("bbox")) for item in missed_objects):
         reasons.append(_reason("ADDITIONAL_OBJECT_FOUND"))
 
     for vlm_object in vlm_result.get("objects", []):
@@ -250,22 +259,11 @@ def should_reanalyze_high(
         if vlm_object.get("yoloCategoryMatches") is False:
             reasons.append(_reason("YOLO_VLM_ITEM_MISMATCH", object_id))
 
-        checklist_category_code = vlm_item_code or yolo_item_code
-        for checklist_item in normalize_checklist_results(vlm_object, category_code=checklist_category_code):
-            if checklist_item["statusValue"] is None:
-                reasons.append(_reason("REQUIRED_STATE_NULL", object_id, checklist_item["checkItemName"]))
-
         if vlm_object.get("bboxHasMultipleObjects") is True:
             reasons.append(_reason("MULTIPLE_OBJECTS_IN_BBOX", object_id))
 
-        if vlm_object.get("hasUnlabeledNearbyObject") is True:
-            reasons.append(_reason("UNLABELED_NEARBY_OBJECT", object_id))
-
         if vlm_object.get("isTooSmallOrBlurred") is True:
             reasons.append(_reason("OBJECT_TOO_SMALL_OR_BLURRED", object_id))
-
-        if vlm_object.get("needsReview") is True:
-            reasons.append(_reason("VLM_NEEDS_REVIEW", object_id))
 
         if yolo_object.get("isSmallYoloObject") is True:
             reasons.append(_reason("OBJECT_TOO_SMALL_OR_BLURRED", object_id))
