@@ -11,7 +11,25 @@ from prompts.pet_bottle_prompt import MULTI_OBJECT_STATE_PROMPT, PET_BOTTLE_STAT
 load_dotenv()
 
 DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.5")
-OPENAI_TIMEOUT_SECONDS = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "60"))
+# 2026-10-09: 벤치마크(bench/) 측정 결과 GPT 응답 시간의 대부분이 추론(reasoning) 토큰이었고
+# (출력 토큰의 70~80%), 시간이 60초를 넘는 호출도 있었음.
+# - 타임아웃: 60초를 넘으면 SDK가 처음부터 다시 요청해서(기본 2회 재시도) 한 번에 3분 가까이 걸린 사례가
+#   있었음. 타임아웃을 넉넉히 두고 재시도는 1회로 제한해서, 오래 걸리는 요청을 버리고 다시 시작하지 않게 함.
+# - 추론 강도: OPENAI_REASONING_EFFORT 로 조절. 비워 두면 reasoning 옵션을 보내지 않음(모델 기본값,
+#   추론을 지원하지 않는 모델로 바꿀 때 사용).
+OPENAI_TIMEOUT_SECONDS = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "120"))
+OPENAI_MAX_RETRIES = int(os.getenv("OPENAI_MAX_RETRIES", "1"))
+OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "low").strip()
+
+
+def _create_client(api_key: str) -> OpenAI:
+    return OpenAI(api_key=api_key, timeout=OPENAI_TIMEOUT_SECONDS, max_retries=OPENAI_MAX_RETRIES)
+
+
+def _reasoning_options() -> dict[str, Any]:
+    if not OPENAI_REASONING_EFFORT:
+        return {}
+    return {"reasoning": {"effort": OPENAI_REASONING_EFFORT}}
 
 
 def _image_to_data_url(image_bytes: bytes, mime_type: str) -> str:
@@ -85,10 +103,11 @@ def analyze_pet_bottle_image(
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is not set. Check your .env file.")
 
-    client = OpenAI(api_key=api_key, timeout=OPENAI_TIMEOUT_SECONDS)
+    client = _create_client(api_key)
 
     response = client.responses.create(
         model=model,
+        **_reasoning_options(),
         input=[
             {
                 "role": "user",
@@ -126,7 +145,7 @@ def analyze_numbered_original_image(
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is not set. Check your .env file.")
 
-    client = OpenAI(api_key=api_key, timeout=OPENAI_TIMEOUT_SECONDS)
+    client = _create_client(api_key)
     prompt = (
         f"{MULTI_OBJECT_STATE_PROMPT}\n\n"
         "YOLO 객체 목록:\n"
@@ -135,6 +154,7 @@ def analyze_numbered_original_image(
 
     response = client.responses.create(
         model=model,
+        **_reasoning_options(),
         input=[
             {
                 "role": "user",
