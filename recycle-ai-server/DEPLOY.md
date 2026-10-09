@@ -122,11 +122,27 @@ curl http://localhost:8000/health
 - 설정만 되돌리기: EC2의 `.env`에서 값을 바꾸고 `docker compose up -d` (컨테이너가 새 설정으로 다시 뜸)
 - 코드 되돌리기: 로컬에서 되돌릴 커밋을 지정해 위 1~3단계를 똑같이 진행 (예: `git archive --format=tar.gz -o ai-main.tar.gz <이전 커밋 해시>`)
 
+자동배포(2026-10-09~):
+
+```text
+main에 recycle-ai-server/ 변경이 merge되면 GitHub Actions(.github/workflows/deploy-ai-ec2.yml)가 EC2에 자동 배포합니다.
+EC2 실행 위치: ~/200ok-AI/recycle-ai-server (.env도 이 폴더에 있음)
+수동 재배포: GitHub Actions 탭 → "Deploy AI server to EC2" → Run workflow (main)
+위의 git archive 수동 방식은 자동배포가 안 될 때만 씁니다.
+```
+
 로그 확인:
 
 ```bash
-docker compose logs -f --tail 100
+# 지금 컨테이너 로그
+cd ~/200ok-AI/recycle-ai-server && docker compose logs -f --tail 100
+
+# 재배포로 컨테이너가 바뀐 뒤에도 남아 있는 이전 로그 (journald에 저장)
+journalctl -t recycle-ai-server --since "2026-10-09 15:00" --no-pager
+journalctl -t recycle-ai-server --since today --no-pager | grep "analysis object\|analysis high_reasons\|analysis additional"
 ```
+
+로그는 EC2 시스템 로그(/var/log/journal)에 저장되고, 디스크의 일정 비율을 넘으면 오래된 것부터 자동으로 지워집니다.
 
 주의:
 
