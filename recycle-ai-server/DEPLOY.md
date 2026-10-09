@@ -42,7 +42,7 @@ YOLO_CONF_THRESHOLD=0.25
 
 ```text
 .env 파일은 배포에 올리지 않습니다.
-OPENAI_API_KEY는 배포 서비스의 Environment Variables에 직접 등록합니다.
+OPENAI_API_KEY는 EC2 서버의 .env 파일에 직접 둡니다.
 ```
 
 ## 로컬 실행
@@ -72,35 +72,62 @@ docker run --rm -p 8020:8000 --env-file .env recycle-ai-server
 http://127.0.0.1:8020/health
 ```
 
-## Render 배포 흐름
+## AWS EC2 배포 흐름
 
-1. GitHub에 `recycle-ai-server` 폴더를 포함한 저장소를 올립니다.
-2. Render에서 New Web Service를 생성합니다.
-3. Runtime은 Docker를 선택합니다.
-4. Root Directory를 `recycle-ai-server`로 설정합니다.
-5. Environment Variables에 아래 값을 등록합니다.
+> 2026-10-09 Render에서 AWS EC2로 이전했습니다. Render 서비스와 `render.yaml`은 더 이상 쓰지 않습니다.
+
+현재 구성:
 
 ```text
-OPENAI_API_KEY=실제 API 키
-OPENAI_MODEL=gpt-5.5
-YOLO_MODEL_PATH=models/best.pt
-YOLO_IMG_SIZE=640
-YOLO_CONF_THRESHOLD=0.25
+AWS 계정: 2103-7956-1794 (서울 ap-northeast-2)
+인스턴스: recycle-ai-server (t3.small, Ubuntu 24.04, gp3 20GB)
+고정 IP(Elastic IP): 3.37.251.117
+보안 그룹: recycle-ai-server-sg
+  - 8000: 백엔드 Lightsail 고정 IP(15.164.34.219)만 허용
+  - 22: 관리자 PC IP만 허용
+실행 방식: Docker Compose (docker-compose.yml, restart: unless-stopped)
 ```
 
-6. 배포 후 아래 주소를 확인합니다.
+서버에 처음 올리거나 코드를 갱신할 때:
+
+1. 로컬에서 main 기준 코드를 묶어 EC2로 복사합니다. (EC2에는 GitHub 인증이 없습니다)
+
+```bash
+git archive --format=tar.gz -o ai-main.tar.gz origin/main
+scp -i ~/.ssh/recycle-ai-ec2.pem ai-main.tar.gz ubuntu@3.37.251.117:~/recycle-ai-server/
+```
+
+2. `.env`는 저장소에 올리지 않고 EC2의 `~/recycle-ai-server/.env`에 직접 둡니다. (권한 600)
+3. EC2에서 압축을 풀고 다시 빌드합니다.
+
+```bash
+cd ~/recycle-ai-server
+tar xzf ai-main.tar.gz && rm ai-main.tar.gz
+docker compose up -d --build
+curl http://localhost:8000/health
+```
+
+로그 확인:
+
+```bash
+docker compose logs -f --tail 100
+```
+
+주의:
 
 ```text
-https://배포주소/health
-https://배포주소/docs
+SSH 키(recycle-ai-ec2.pem)는 AWS에서 재발급되지 않습니다. 저장소에 절대 올리지 않습니다.
+관리자 PC IP가 바뀌면 보안 그룹 22번 규칙을 새 IP로 수정해야 SSH가 됩니다.
+백엔드 서버 IP가 바뀌면 보안 그룹 8000번 규칙을 새 IP로 수정해야 합니다.
 ```
 
 ## 백엔드에 전달할 주소
 
-배포 후 Spring Boot 백엔드에는 아래 주소를 전달합니다.
+Spring Boot 백엔드는 환경변수 `AI_SERVER_URL`로 이 서버 주소를 읽습니다.
 
 ```text
-POST https://배포주소/analyze
+AI_SERVER_URL=http://3.37.251.117:8000
+POST {AI_SERVER_URL}/analyze
 ```
 
 전송 방식:
