@@ -4,9 +4,16 @@
 # bbox가 없거나 비정상인 것만 additionalObjects에 남김 - 백엔드 검증이 objects[].bbox를 필수로 요구하기 때문.
 # /finalize 도입에 맞춰 additionalObjects를 V1 스펙(itemCode/confidence/bbox/states)으로 정규화하는
 # _normalize_additional_objects를 추가함 (기존엔 missedObjects를 형식 검증 없이 그대로 내보냈음).
+# 2026-10-13: 캔·종이팩·불투명 플라스틱은 isEmpty를 GPT 판단 대신 true로 가정(apply_assumed_empty) -
+# YOLO 탐지 물체, GPT 추가 물체, 레거시 /analyze-ai2 경로 세 곳 모두 적용.
 from typing import Any
 
-from schemas.analysis_schema import CATEGORY_STATE_FIELDS, normalize_checklist_results, normalize_states
+from schemas.analysis_schema import (
+    CATEGORY_STATE_FIELDS,
+    apply_assumed_empty,
+    normalize_checklist_results,
+    normalize_states,
+)
 
 MODEL_VERSION = "v1.0.3"
 MULTI_OBJECT_MODEL_VERSION = "v1.1.0"
@@ -80,6 +87,7 @@ def build_analysis_result(
                 "confidence": confidence,
             }
         )
+    apply_assumed_empty(item_code, check_items)  # isTransparent 덮어쓴 뒤에 해야 불투명 플라스틱 판정이 맞음
 
     return {
         "categoryCode": item_code,
@@ -175,15 +183,15 @@ def _normalize_additional_objects(raw_missed_objects: Any) -> list[dict[str, Any
         # 8품목 밖의 코드를 GPT가 지어내면 상태 필드/규칙 매칭이 안 되므로 UNKNOWN으로 묶어 사용자 선택에 맡김
         if item_code not in CATEGORY_STATE_FIELDS:
             item_code = "UNKNOWN"
+        checklist_results = normalize_checklist_results(item, category_code=item_code)
+        apply_assumed_empty(item_code, checklist_results)  # GPT가 추가로 찾은 캔·종이팩 등에도 같은 규칙 적용
         normalized.append(
             {
                 "itemCode": item_code,
                 "objectName": item.get("objectName"),
                 "confidence": float(confidence_raw) if confidence_raw is not None else None,
                 "bbox": _bbox_to_object(item.get("bbox")),
-                "states": _states_from_checklist(
-                    normalize_checklist_results(item, category_code=item_code), category_code=item_code
-                ),
+                "states": _states_from_checklist(checklist_results, category_code=item_code),
             }
         )
 
@@ -414,6 +422,8 @@ def build_multi_object_analysis_result(
                 if checklist_item["checkItemName"] == "isTransparent":
                     checklist_item["statusValue"] = yolo_transparency
                     checklist_item["confidence"] = yolo_object.get("confidence")
+        # 위 YOLO 투명도 반영 뒤에 호출 - 가정값은 null이 아니므로 REQUIRED_STATE_NULL 사유에서도 빠짐
+        apply_assumed_empty(item_code, checklist_results)
 
         object_review_reasons = _build_object_review_reasons(object_id, checklist_results, vlm_object)
 
