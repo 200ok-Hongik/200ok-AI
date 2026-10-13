@@ -46,6 +46,14 @@ OPENAI_TIMEOUT_SECONDS=120      # 60으로 두면 오래 걸리는 요청이 타
 OPENAI_MAX_RETRIES=1
 ```
 
+선택 환경변수 (2026-10-13 GPT 전송 이미지 축소 때 추가, 없으면 아래 기본값):
+
+```text
+VLM_MAX_IMAGE_SIDE=2048      # GPT에 보내기 전 긴 변 최대(px). 0이면 줄이지 않고 원본 전송(이전 동작)
+VLM_MAX_IMAGE_PATCHES=2500   # 32px 패치 수 최대. gpt-5.5 high 처리 한도와 같게 둬서 GPT가 보는 화질은 그대로
+VLM_JPEG_QUALITY=85          # 줄인 이미지 JPEG 품질
+```
+
 EC2의 .env에 OPENAI_TIMEOUT_SECONDS=60이 남아 있으면 기본값(120)보다 우선하므로 120으로 바꾸거나 줄을 지웁니다.
 
 주의:
