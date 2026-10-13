@@ -46,6 +46,38 @@ FIELD_TO_CHECKLIST_ID = {field: checklist_id for checklist_id, field in CHECKLIS
 # 하위호환: STATE_FIELDS를 직접 import해서 쓰던 기존 코드가 있으면 그대로 동작하도록 유지.
 STATE_FIELDS = LEGACY_STATE_FIELDS
 
+# 2026-10-13 "규칙 수집" 원문 기준 - 속이 안 보이는 품목은 isEmpty를 VLM이 판단하지 않고 true로 가정함.
+# 캔·종이팩은 항상, 플라스틱은 불투명(isTransparent=false)일 때만. 사진으로 속을 볼 수 없는데 GPT가
+# 추측하면 빈 캔에도 "비워주세요"를 잘못 안내할 수 있어서 서버에서 덮어씀.
+# 무색 페트병/투명 플라스틱/유리병은 속이 보이므로 GPT 판단 그대로 둠(비닐은 원문상 조건부라 이번엔 제외).
+ASSUMED_EMPTY_CATEGORIES = frozenset({"CAN", "PAPER_PACK"})
+ASSUMED_EMPTY_CONFIDENCE = 1.0  # 판단이 아니라 규칙상 확정값이라 1.0 - 확인 필요(REQUIRED_STATE_NULL) 사유에서도 빠짐
+
+
+def apply_assumed_empty(category_code: str | None, checklist_results: list[dict[str, Any]]) -> None:
+    """속이 안 보이는 품목의 isEmpty를 "true"로 덮어쓴다(checklist_results를 직접 수정).
+
+    PLASTIC의 투명 여부는 YOLO 판정으로 isTransparent를 덮어쓴 뒤에 호출해야 정확함.
+    """
+    if category_code in ASSUMED_EMPTY_CATEGORIES:
+        assume = True
+    elif category_code == "PLASTIC":
+        # isTransparent가 null(판단 불가)이면 투명일 수도 있으니 가정하지 않고 GPT 판단을 유지
+        assume = any(
+            item.get("checkItemName") == "isTransparent" and item.get("statusValue") == "false"
+            for item in checklist_results
+        )
+    else:
+        assume = False
+
+    if not assume:
+        return
+
+    for item in checklist_results:
+        if item.get("checkItemName") == "isEmpty":
+            item["statusValue"] = "true"
+            item["confidence"] = ASSUMED_EMPTY_CONFIDENCE
+
 
 def _state_fields_for(category_code: str | None) -> tuple[str, ...]:
     if category_code is None:
