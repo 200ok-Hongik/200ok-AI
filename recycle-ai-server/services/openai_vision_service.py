@@ -1,3 +1,6 @@
+# 2026-11-05: 응답 시간 단축을 위해 GPT 출력 JSON을 간결한 형태(states 객체 + flags 배열)로 바꾸고, 받은 직후
+# _expand_compact_result로 기존 내부 형태(checklistResults, bboxHasMultipleObjects 등)로 펼침 - result_builder와
+# 백엔드 응답 계약은 그대로. GPT에 보내는 YOLO 목록도 들여쓰기 없이 보내 입력 토큰을 줄임.
 # 2026-10-13: GPT에 보내기 전 이미지를 OpenAI가 high 단계에서 실제로 쓰는 크기(긴 변 2048px, 32px 패치 2,500개
 # 이하)로 미리 줄여 보내도록 _prepare_image_for_vlm 추가 - 휴대폰 원본(4000px급, 수 MB)을 그대로 보내도 OpenAI가
 # 같은 크기로 줄여서 보므로 정확도는 같고 업로드·처리 시간만 줄어듦. 줄인 이미지 기준으로 YOLO bbox를 바꿔 보내고,
@@ -148,6 +151,56 @@ def _parse_gpt_json(text: str) -> dict[str, Any]:
     return parsed
 
 
+# 간결한 GPT 응답의 flags 값 -> 기존 내부 필드명. result_builder가 이 필드명으로 high 재분석·검토 사유를 판단함
+_FLAG_TO_FIELD = {
+    "MULTIPLE_OBJECTS": "bboxHasMultipleObjects",
+    "NEARBY_UNLABELED": "hasUnlabeledNearbyObject",
+    "TOO_SMALL_OR_BLURRED": "isTooSmallOrBlurred",
+    "NEEDS_REVIEW": "needsReview",
+}
+
+
+def _states_to_checklist(states: dict[str, Any]) -> list[dict[str, Any]]:
+    """{"hasCap": true, ...} -> [{"checkItemName": "hasCap", "statusValue": "true", ...}] (기존 checklistResults 형태)."""
+    checklist = []
+    for name, value in states.items():
+        # 상태 항목별 confidence는 GPT에서 더 이상 받지 않음 - 최종 states가 true/false/null만 쓰기 때문
+        if value is True or value is False:
+            checklist.append({"checkItemName": name, "statusValue": str(value).lower(), "confidence": None})
+        else:
+            checklist.append({"checkItemName": name, "statusValue": value, "confidence": None})
+    return checklist
+
+
+def _expand_compact_result(result: dict[str, Any], yolo_objects: list[dict[str, Any]]) -> dict[str, Any]:
+    """간결한 GPT 응답을 result_builder가 기대하는 기존 형태로 펼친다. 이미 기존 형태인 항목은 그대로 둔다."""
+    yolo_category_by_id = {item.get("objectId"): item.get("categoryCode") for item in yolo_objects}
+
+    for item in result.get("objects") or []:
+        if not isinstance(item, dict):
+            continue
+        if isinstance(item.get("states"), dict) and "checklistResults" not in item:
+            item["checklistResults"] = _states_to_checklist(item["states"])
+        if isinstance(item.get("flags"), list):
+            flags = {str(flag).upper() for flag in item["flags"]}
+            for flag, field in _FLAG_TO_FIELD.items():
+                # flags에 없으면 해당 없음(false) - GPT가 해당할 때만 적게 해서 출력 토큰을 줄였기 때문
+                item.setdefault(field, flag in flags)
+        if "yoloCategoryMatches" not in item:
+            # GPT에게 묻지 않고 서버가 직접 비교 (should_reanalyze_high도 같은 비교를 이미 하고 있음)
+            yolo_category = yolo_category_by_id.get(item.get("objectId"))
+            vlm_category = item.get("categoryCode")
+            item["yoloCategoryMatches"] = (
+                None if not yolo_category or not vlm_category else yolo_category == vlm_category
+            )
+
+    for item in result.get("missedObjects") or []:
+        if isinstance(item, dict) and isinstance(item.get("states"), dict) and "checklistResults" not in item:
+            item["checklistResults"] = _states_to_checklist(item["states"])
+
+    return result
+
+
 def analyze_pet_bottle_image(
     image_bytes: bytes,
     mime_type: str = "image/jpeg",
@@ -215,7 +268,8 @@ def analyze_numbered_original_image(
         # detail 값이 곧 프롬프트의 "low"/"high" 단계라서 그대로 알려준다
         f"현재 분석 단계: {detail}\n\n"
         "YOLO 객체 목록:\n"
-        f"{json.dumps(vlm_yolo_objects, ensure_ascii=False, indent=2)}"
+        # 들여쓰기 없이 보냄 - 줄바꿈·공백도 입력 토큰이라 물체가 많을수록 손해
+        f"{json.dumps(vlm_yolo_objects, ensure_ascii=False, separators=(',', ':'))}"
     )
 
     response = client.responses.create(
@@ -240,7 +294,7 @@ def analyze_numbered_original_image(
     )
 
     raw_text = response.output_text or ""
-    result = _parse_gpt_json(raw_text)
+    result = _expand_compact_result(_parse_gpt_json(raw_text), yolo_objects)
     # GPT가 준 추가 물체 좌표는 줄인 이미지 기준이라 원본 좌표로 되돌린다 (응답·백엔드는 원본 좌표 사용)
     if scale != 1.0 and isinstance(result.get("missedObjects"), list):
         for item in result["missedObjects"]:
