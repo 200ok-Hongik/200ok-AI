@@ -1,3 +1,8 @@
+# 2026-11-05: GPT 응답 시간 단축을 위해 MULTI_OBJECT_STATE_PROMPT의 출력 형식을 간결하게 바꿈 - 서버가 안 쓰는
+# modelVersion/needsReview/reviewReasons/yoloCategoryMatches와 상태 항목별 confidence·checklistId를 빼고, 상태는
+# states {이름: true/false/null}, 검토 플래그는 해당할 때만 flags 배열에 넣게 함. 캔·종이팩 isEmpty는 서버가 항상
+# true로 덮어쓰므로(apply_assumed_empty) 묻지 않음. 서버 내부 형태로는 openai_vision_service._expand_compact_result가 되돌림.
+#
 # 2026-10-09: missedObjects에 objectName(GPT가 본 물체 이름)을 추가하고, 번호 물체 안에 들어있는 물체
 # (컵 안의 빨대 등)와 8품목 밖 물체도 빠짐없이 missedObjects에 적도록 규칙 추가 - 서버가 이것들을
 # object_N으로 이어 붙여 사용자가 품목을 고르게 하기 때문(result_builder._promote_missed_objects).
@@ -119,77 +124,33 @@ MULTI_OBJECT_STATE_PROMPT = """
 
 입력 이미지는 YOLO가 탐지한 객체마다 번호와 bbox를 표시한 원본 이미지야.
 이미지 전체를 보고 각 번호 객체를 독립적으로 검증해.
-Crop 이미지는 사용하지 않는다.
 
-반드시 JSON 객체 하나만 출력해.
+반드시 JSON 객체 하나만, 공백·줄바꿈 없는 한 줄로 출력해.
 설명, 마크다운, 코드블록, 주석, 추가 문장은 절대 출력하지 마.
+아래 형식에 없는 필드는 만들지 마.
 
 입력으로 함께 제공되는 yoloObjects에는 YOLO가 탐지한 objectId, categoryCode, yoloClass, bbox, confidence가 들어 있다.
 너는 각 objectId에 대해 품목과 상태를 다시 판단하고, YOLO가 놓친 추가 객체가 있으면 missedObjects에 적어.
 
-출력 형식:
-{
-  "modelVersion": "v1.1.0",
-  "needsReview": false,
-  "imageQuality": "good",
-  "reviewReasons": [],
-  "objects": [
-    {
-      "objectId": 1,
-      "categoryCode": "CLEAR_PET_BOTTLE",
-      "categoryConfidence": 0.95,
-      "yoloCategoryMatches": true,
-      "bboxHasMultipleObjects": false,
-      "hasUnlabeledNearbyObject": false,
-      "isTooSmallOrBlurred": false,
-      "needsReview": false,
-      "reviewReasons": [],
-      "checklistResults": [
-        {
-          "checklistId": 1,
-          "checkItemName": "isTransparent",
-          "statusValue": "true",
-          "confidence": 0.95
-        },
-        {
-          "checklistId": 2,
-          "checkItemName": "hasLabel",
-          "statusValue": "false",
-          "confidence": 0.91
-        },
-        {
-          "checklistId": 3,
-          "checkItemName": "isEmpty",
-          "statusValue": "true",
-          "confidence": 0.9
-        },
-        {
-          "checklistId": 4,
-          "checkItemName": "hasCap",
-          "statusValue": "false",
-          "confidence": 0.88
-        },
-        {
-          "checklistId": 5,
-          "checkItemName": "isContaminated",
-          "statusValue": "false",
-          "confidence": 0.86
-        },
-        {
-          "checklistId": 6,
-          "checkItemName": "isCrushed",
-          "statusValue": null,
-          "confidence": null
-        }
-      ]
-    }
-  ],
-  "missedObjects": []
-}
+출력 형식 (예시):
+{"imageQuality":"good","objects":[{"objectId":1,"categoryCode":"CLEAR_PET_BOTTLE","categoryConfidence":0.95,"states":{"isTransparent":true,"hasLabel":false,"isEmpty":true,"hasCap":false,"isContaminated":false,"isCrushed":null},"flags":[]}],"missedObjects":[]}
+
+필드 설명:
+- imageQuality: 이미지 품질이 충분하면 "good", 부족하면 "poor"
+- objects: yoloObjects의 objectId마다 하나씩 (빠짐없이)
+- categoryCode: 아래 후보 중 하나
+- categoryConfidence: 품목 판단 확신도 0.0~1.0
+- states: 그 categoryCode의 상태 항목만 키로 넣고 값은 true / false / null (따옴표 없이)
+- flags: 해당하는 것만 넣고, 없으면 빈 배열 []
+  - "MULTIPLE_OBJECTS": 하나의 bbox 안에 여러 객체가 있음
+  - "NEARBY_UNLABELED": 번호 없는 다른 객체가 이 객체에 붙어 있거나 바로 옆에 있음
+  - "TOO_SMALL_OR_BLURRED": 객체가 너무 작거나 흐려서 판단이 어려움
+  - "NEEDS_REVIEW": 그 밖에 사용자가 직접 확인해야 할 이유가 있음
 
 missedObjects 항목 형식 (번호 없는 객체가 실제로 있을 때만 이 형식으로 채움, 없으면 빈 배열 []):
-{"objectName": "투명 생수병", "categoryCode": "CLEAR_PET_BOTTLE", "categoryConfidence": 0.8, "bbox": {"xMin": 0, "yMin": 760, "xMax": 1030, "yMax": 1430}, "checklistResults": []}
-{"objectName": "빨대", "categoryCode": "UNKNOWN", "categoryConfidence": 0.7, "bbox": {"xMin": 1210, "yMin": 300, "xMax": 1290, "yMax": 980}, "checklistResults": []}
+{"objectName":"투명 생수병","categoryCode":"CLEAR_PET_BOTTLE","categoryConfidence":0.8,"bbox":[0,760,1030,1430],"states":{"isTransparent":true,"hasLabel":true,"isEmpty":true,"hasCap":true,"isContaminated":false,"isCrushed":false}}
+{"objectName":"빨대","categoryCode":"UNKNOWN","categoryConfidence":0.7,"bbox":[1210,300,1290,980],"states":{}}
+bbox는 이미지 픽셀 좌표 [xMin,yMin,xMax,yMax] 순서야.
 
 categoryCode 후보:
 - CLEAR_PET_BOTTLE: 무색 투명 생수·음료 페트병 (별도배출 대상 - 색이 있거나 불투명하면 안 됨)
@@ -202,59 +163,49 @@ categoryCode 후보:
 - STYROFOAM: 스티로폼
 - UNKNOWN: 판단 불가
 
-checklistResults는 categoryCode마다 필요한 항목이 다르다. 아래 표에서 그 물체의
-categoryCode에 해당하는 줄의 항목만 딱 그 개수만큼 채워라 (다른 categoryCode의
-항목을 섞어 넣지 마라. UNKNOWN이면 checklistResults를 빈 배열로 둬라).
+states는 categoryCode마다 넣을 항목이 다르다. 아래 표에서 그 물체의 categoryCode 줄에 있는
+항목만 전부 넣어라 (다른 categoryCode의 항목을 섞지 마라. UNKNOWN이면 states를 {}로 둬라).
 
-| categoryCode      | 포함할 항목 (checklistId: checkItemName)                                    |
-|-------------------|-------------------------------------------------------------------------------|
-| CLEAR_PET_BOTTLE  | 1:isTransparent, 2:hasLabel, 3:isEmpty, 4:hasCap, 5:isContaminated, 6:isCrushed |
-| PLASTIC           | 1:isTransparent, 2:hasLabel, 3:isEmpty, 4:hasCap, 5:isContaminated, 6:isCrushed |
-| CAN               | 3:isEmpty, 5:isContaminated, 6:isCrushed                                       |
-| GLASS_BOTTLE      | 2:hasLabel, 4:hasCap, 3:isEmpty, 5:isContaminated, 7:isBroken                  |
-| VINYL             | 3:isEmpty, 5:isContaminated                                                    |
-| PAPER             | 5:isContaminated, 8:isWet, 9:hasTape, 10:isFlattened                           |
-| PAPER_PACK        | 4:hasCap, 11:hasStraw, 3:isEmpty, 5:isContaminated, 10:isFlattened             |
-| STYROFOAM         | 2:hasLabel, 9:hasTape, 5:isContaminated                                        |
+| categoryCode      | states에 넣을 항목                                                   |
+|-------------------|----------------------------------------------------------------------|
+| CLEAR_PET_BOTTLE  | isTransparent, hasLabel, isEmpty, hasCap, isContaminated, isCrushed  |
+| PLASTIC           | isTransparent, hasLabel, isEmpty, hasCap, isContaminated, isCrushed  |
+| CAN               | isContaminated, isCrushed                                            |
+| GLASS_BOTTLE      | hasLabel, hasCap, isEmpty, isContaminated, isBroken                  |
+| VINYL             | isEmpty, isContaminated                                              |
+| PAPER             | isContaminated, isWet, hasTape, isFlattened                          |
+| PAPER_PACK        | hasCap, hasStraw, isContaminated, isFlattened                        |
+| STYROFOAM         | hasLabel, hasTape, isContaminated                                    |
 
 CLEAR_PET_BOTTLE/PLASTIC 물체는 isTransparent도 계속 판단해야 함 - 유색이라서
 PLASTIC이 된 건지, 아니면 원래 투명한 다른 플라스틱(컵·트레이 등)이라서 PLASTIC이
 된 건지 구분하는 정보로 쓰임 (실제 분리배출 기준상 무색 투명 페트병만 별도배출 대상).
 
-항목 판단 기준 (checkItemName별):
-- isTransparent: 무색 투명(내부가 비쳐 보임)이면 "true", 유색/불투명이면 "false"
-- hasLabel: 제거해야 하는 종이·비닐 라벨이나 상표 라벨이 붙어 있으면 "true"
-- isEmpty: 내용물이 없어 비어 보이면 "true"
-- hasCap: 분리해야 하는 뚜껑이 닫혀 있거나 붙어 있으면 "true"
-- isContaminated: 음식물·기름·흙 등이 묻었거나 내부에 다른 이물질이 들어 있으면 "true"
-- isCrushed: 찌그러지거나 압착된 상태면 "true"
-- isBroken: 깨지거나 파손된 상태면 "true"
-- isWet: 물에 젖은 상태면 "true"
-- hasTape: 테이프가 붙어 있으면 "true"
-- isFlattened: 펼치거나 납작하게 접힌 상태면 "true" (종이류는 편 상태가 정상 배출 상태)
-- hasStraw: 빨대가 붙어 있으면 "true"
+항목 판단 기준:
+- isTransparent: 무색 투명(내부가 비쳐 보임)이면 true, 유색/불투명이면 false
+- hasLabel: 제거해야 하는 종이·비닐 라벨이나 상표 라벨이 붙어 있으면 true
+- isEmpty: 내용물이 없어 비어 보이면 true
+- hasCap: 분리해야 하는 뚜껑이 닫혀 있거나 붙어 있으면 true
+- isContaminated: 음식물·기름·흙 등이 묻었거나 내부에 다른 이물질이 들어 있으면 true
+- isCrushed: 찌그러지거나 압착된 상태면 true
+- isBroken: 깨지거나 파손된 상태면 true
+- isWet: 물에 젖은 상태면 true
+- hasTape: 테이프가 붙어 있으면 true
+- isFlattened: 펼치거나 납작하게 접힌 상태면 true (종이류는 편 상태가 정상 배출 상태)
+- hasStraw: 빨대가 붙어 있으면 true
 
 중요 규칙:
 - 보이는 정보만 판단해.
-- 불확실한 상태값은 추측하지 말고 statusValue를 null로 둬.
-- statusValue가 null이면 confidence도 반드시 null이야.
-- checklistResults의 checklistId/checkItemName은 위 표에 있는 숫자·이름 그대로 써야 해 -
-  다른 숫자를 새로 만들거나 표에 없는 조합을 넣지 마.
+- 불확실한 상태값은 추측하지 말고 null로 둬.
 - yoloObjects에 있는 objectId는 모두 objects에 포함해.
-- YOLO 품목과 네가 판단한 품목이 다르면 yoloCategoryMatches를 false로 둬.
-- 하나의 bbox 안에 여러 객체가 있으면 bboxHasMultipleObjects를 true로 둬.
-- 번호가 없는 추가 객체를 발견하면 missedObjects에 적고 needsReview를 true로 둬.
-  missedObjects 각 항목은 objectName, categoryCode, categoryConfidence, bbox, checklistResults를 위 출력 형식과 같은 구조로 채워.
+- 번호가 없는 추가 객체를 발견하면 missedObjects에 적어.
   objectName은 그 물체가 무엇인지 사용자가 알아볼 수 있는 짧은 한국어 이름이야 (예: "빨대", "종이컵", "나무젓가락").
   추가로 적을 객체가 없거나 객체인지 애매하면 missedObjects는 반드시 빈 배열 []로 둬.
   "low" 단계에서는 위치를 정확히 특정하기 어려우면 bbox를 null로 남겨도 되지만,
-  "high" 단계에서는 이미지 픽셀 좌표({"xMin":n,"yMin":n,"xMax":n,"yMax":n})를 반드시 추정해서 채워.
+  "high" 단계에서는 bbox를 반드시 추정해서 채워.
 - 번호 물체 안에 들어 있거나 꽂혀 있는 다른 물체(예: 컵 안의 빨대)도 따로 떨어질 수 있는 물체면 상태값으로만 처리하지 말고 missedObjects에 별도 객체로 적어.
 - 위 categoryCode 후보에 없는 물체도 빼지 말고 categoryCode를 "UNKNOWN"으로 해서 missedObjects에 적어. 사용자가 품목을 직접 고른다.
 - 같은 물체를 재질별로 나눠 두 번 적지 마 (예: 종이컵 하나를 "종이"와 "플라스틱 코팅"으로 따로 적지 말고 하나로만 적어).
   이미 번호가 붙은 objects의 물체도 missedObjects에 다시 적지 마.
 - 배출 대상이 아닌 배경 물건(책상, 바닥, 손, 벽, 가구 등)은 missedObjects에 적지 마.
-- 객체가 너무 작거나 흐리면 isTooSmallOrBlurred를 true로 둬.
-- 이미지 품질이 부족하면 imageQuality를 "poor"로 둬.
-- 어떤 객체든 needsReview가 필요하면 최상위 needsReview도 true로 둬.
 """.strip()
