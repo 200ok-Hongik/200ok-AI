@@ -1,3 +1,6 @@
+# 2026-11-06: build_multi_object_analysis_result가 GPT 답 대신 YOLO 물체 목록을 기준으로 돌도록 변경 - GPT가 빼먹은
+# YOLO 물체는 YOLO 판단으로 남기고(VLM_RESULT_MISSING), YOLO에 없는 번호를 지어낸 GPT 답은 버림(bbox가 없어 백엔드
+# 검증 실패). 품목 코드는 normalize_item_code로 8품목 대문자/UNKNOWN만 나가게 함.
 # 2026-10-09: YOLO가 못 찾고 GPT만 찾은 물체(missedObjects - 종이컵 안의 빨대, 학습 안 된 품목 등)를
 # additionalObjects로 따로 빼지 않고 objects에 object_N 번호를 이어 붙여 넣도록 변경함(_promote_missed_objects).
 # 8품목 밖이면 itemCode=UNKNOWN + GPT가 본 이름(objectName)을 같이 보내서 사용자가 품목을 고르게 함.
@@ -6,14 +9,18 @@
 # _normalize_additional_objects를 추가함 (기존엔 missedObjects를 형식 검증 없이 그대로 내보냈음).
 # 2026-10-13: 캔·종이팩·불투명 플라스틱은 isEmpty를 GPT 판단 대신 true로 가정(apply_assumed_empty) -
 # YOLO 탐지 물체, GPT 추가 물체, 레거시 /analyze-ai2 경로 세 곳 모두 적용.
+import logging
 from typing import Any
 
 from schemas.analysis_schema import (
     CATEGORY_STATE_FIELDS,
     apply_assumed_empty,
     normalize_checklist_results,
+    normalize_item_code,
     normalize_states,
 )
+
+logger = logging.getLogger("recycle_ai_server")  # main.py와 같은 로거 - EC2 journald 로그에 같이 남음
 
 MODEL_VERSION = "v1.0.3"
 MULTI_OBJECT_MODEL_VERSION = "v1.1.0"
@@ -179,10 +186,9 @@ def _normalize_additional_objects(raw_missed_objects: Any) -> list[dict[str, Any
             continue
 
         confidence_raw = item.get("categoryConfidence")
-        item_code = str(item.get("categoryCode") or "UNKNOWN")
         # 8품목 밖의 코드를 GPT가 지어내면 상태 필드/규칙 매칭이 안 되므로 UNKNOWN으로 묶어 사용자 선택에 맡김
-        if item_code not in CATEGORY_STATE_FIELDS:
-            item_code = "UNKNOWN"
+        # (2026-11-06: 대소문자도 같이 정리 - 전엔 "paper"가 8품목인데도 UNKNOWN이 됐음)
+        item_code = normalize_item_code(item.get("categoryCode")) or "UNKNOWN"
         checklist_results = normalize_checklist_results(item, category_code=item_code)
         apply_assumed_empty(item_code, checklist_results)  # GPT가 추가로 찾은 캔·종이팩 등에도 같은 규칙 적용
         normalized.append(
@@ -403,14 +409,34 @@ def build_multi_object_analysis_result(
     yolo_objects = yolo_result.get("objects", [])
     output_objects: list[dict[str, Any]] = []
 
+    # 2026-11-06: GPT 답을 도는 대신 YOLO 물체를 기준으로 돈다.
+    # - GPT가 YOLO 물체를 빼먹으면 그 물체가 결과에서 조용히 사라졌음 → YOLO 판단으로 남기고 VLM_RESULT_MISSING 표시
+    # - GPT가 YOLO에 없는 번호를 지어내면 bbox 없는 물체가 나가 백엔드 검증(bbox 필수)에서 분석 전체가 실패했음 → 제외
+    vlm_by_number: dict[int, dict[str, Any]] = {}
     for vlm_object in vlm_result.get("objects", []):
         if not isinstance(vlm_object, dict):
             continue
+        number = _parse_object_id(vlm_object.get("objectId"))
+        if number is None or not _find_yolo_object(yolo_objects, number):
+            logger.warning("analysis vlm object ignored: objectId=%s not in YOLO", vlm_object.get("objectId"))
+            continue
+        vlm_by_number.setdefault(number, vlm_object)  # 같은 번호를 두 번 답하면 첫 답만 사용
 
-        object_id = vlm_object.get("objectId")
-        yolo_object = _find_yolo_object(yolo_objects, object_id)
+    for yolo_object in yolo_objects:
+        object_id = yolo_object.get("objectId")
+        vlm_object = vlm_by_number.get(_parse_object_id(object_id))
+        vlm_missing = vlm_object is None
+        if vlm_missing:
+            logger.warning("analysis vlm result missing: objectId=%s, YOLO 판단으로 대체", object_id)
+            vlm_object = {"objectId": object_id}  # 품목은 아래에서 YOLO 품목으로, 상태는 전부 null(확인 필요)
+
         normalized_object_id = _make_object_id(object_id)
-        item_code = str(vlm_object.get("categoryCode") or yolo_object.get("categoryCode") or "UNKNOWN")
+        # GPT 코드는 _expand_compact_result에서 이미 정리되지만, 다른 경로로 들어와도 백엔드가 모르는 코드가 안 나가게 한 번 더
+        item_code = (
+            normalize_item_code(vlm_object.get("categoryCode"))
+            or normalize_item_code(yolo_object.get("categoryCode"))
+            or "UNKNOWN"
+        )
         item_confidence = float(vlm_object.get("categoryConfidence") or yolo_object.get("confidence") or 0.0)
         checklist_results = normalize_checklist_results(vlm_object, category_code=item_code)
         yolo_transparency = _get_yolo_transparency(str(yolo_object.get("yoloClass") or ""))
@@ -426,6 +452,9 @@ def build_multi_object_analysis_result(
         apply_assumed_empty(item_code, checklist_results)
 
         object_review_reasons = _build_object_review_reasons(object_id, checklist_results, vlm_object)
+        if vlm_missing:
+            # 백엔드·프론트는 reviewReasons를 읽지 않아(2026-11-06 확인) 새 코드를 추가해도 계약이 깨지지 않음
+            object_review_reasons = _dedupe_reasons(object_review_reasons + [_reason("VLM_RESULT_MISSING", object_id)])
 
         output_objects.append(
             {

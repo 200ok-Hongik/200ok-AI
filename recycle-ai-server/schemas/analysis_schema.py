@@ -20,6 +20,21 @@ CATEGORY_STATE_FIELDS: dict[str, tuple[str, ...]] = {
     "STYROFOAM": ("hasLabel", "hasTape", "isContaminated"),
 }
 
+
+def normalize_item_code(value: Any) -> str | None:
+    """GPT가 준 품목 코드를 8품목 대문자 또는 "UNKNOWN"으로 맞춘다. 비어 있으면 None(호출부가 YOLO 품목으로 대체).
+
+    2026-11-06 추가: 백엔드는 itemCode를 품목 테이블에서 그대로 찾고 없으면 분석 전체를 실패시키는데,
+    GPT가 "can"(소문자)이나 "BATTERY"(없는 품목)처럼 답하면 YOLO 탐지 물체 쪽은 그대로 나가고 있었음.
+    """
+    if value is None:
+        return None
+    code = str(value).strip().upper()  # " Can " → "CAN"
+    if not code:
+        return None
+    return code if code in CATEGORY_STATE_FIELDS else "UNKNOWN"  # 8품목 밖(지어낸 코드·한글 이름 등)은 UNKNOWN
+
+
 # category_code를 모르는(아직 카테고리별로 안 나뉜) 기존 호출부를 위한 기본값 -
 # 예전 STATE_FIELDS와 동일한 6개(CLEAR_PET_BOTTLE/PLASTIC 공통 필드셋). 기존 동작을
 # 안 깨기 위한 하위호환용.
