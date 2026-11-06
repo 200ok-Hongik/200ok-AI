@@ -1,3 +1,6 @@
+# 2026-11-06: GPT 응답을 펼칠 때 categoryCode를 8품목 대문자/UNKNOWN으로 정리(_normalize_category_code_field) -
+# "can"·"BATTERY"가 YOLO 탐지 물체 쪽으로 그대로 나가 백엔드 품목 조회가 실패할 수 있었고, 소문자 같은 품목도
+# YOLO와 불일치로 잡혀 불필요한 high 재분석이 일어났음.
 # 2026-11-05: 응답 시간 단축을 위해 GPT 출력 JSON을 간결한 형태(states 객체 + flags 배열)로 바꾸고, 받은 직후
 # _expand_compact_result로 기존 내부 형태(checklistResults, bboxHasMultipleObjects 등)로 펼침 - result_builder와
 # 백엔드 응답 계약은 그대로. GPT에 보내는 YOLO 목록도 들여쓰기 없이 보내 입력 토큰을 줄임.
@@ -22,6 +25,7 @@ from openai import OpenAI
 from PIL import Image, ImageOps
 
 from prompts.pet_bottle_prompt import MULTI_OBJECT_STATE_PROMPT, PET_BOTTLE_STATE_PROMPT
+from schemas.analysis_schema import normalize_item_code
 load_dotenv()
 
 DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.5")
@@ -179,6 +183,7 @@ def _expand_compact_result(result: dict[str, Any], yolo_objects: list[dict[str, 
     for item in result.get("objects") or []:
         if not isinstance(item, dict):
             continue
+        _normalize_category_code_field(item)  # 아래 YOLO 일치 비교 전에 정리해야 "can" vs "CAN"이 불일치로 안 잡힘
         if isinstance(item.get("states"), dict) and "checklistResults" not in item:
             item["checklistResults"] = _states_to_checklist(item["states"])
         if isinstance(item.get("flags"), list):
@@ -195,10 +200,23 @@ def _expand_compact_result(result: dict[str, Any], yolo_objects: list[dict[str, 
             )
 
     for item in result.get("missedObjects") or []:
+        if isinstance(item, dict):
+            _normalize_category_code_field(item)  # "paper" → PAPER (전엔 8품목인데도 UNKNOWN으로 바뀌었음)
         if isinstance(item, dict) and isinstance(item.get("states"), dict) and "checklistResults" not in item:
             item["checklistResults"] = _states_to_checklist(item["states"])
 
     return result
+
+
+def _normalize_category_code_field(item: dict[str, Any]) -> None:
+    """item["categoryCode"]를 8품목 대문자/UNKNOWN으로 바꾼다. 비어 있으면 키를 지워 YOLO 품목 대체 동작을 유지."""
+    if "categoryCode" not in item:
+        return
+    code = normalize_item_code(item["categoryCode"])
+    if code is None:
+        item.pop("categoryCode")  # 빈 문자열로 남기면 기존처럼 YOLO 품목으로 대체되는 흐름이 명확하지 않음
+    else:
+        item["categoryCode"] = code
 
 
 def analyze_pet_bottle_image(
