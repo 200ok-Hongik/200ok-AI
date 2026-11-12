@@ -3,6 +3,9 @@
 # 2026-10-09: 로그 드라이버를 journald로 변경 - 기본(json-file)은 자동배포로 컨테이너가 새로 만들어질 때
 # 이전 로그가 같이 지워져서, 앱 스캔 원인 분석(진단 로그)을 나중에 못 하는 문제가 있었음.
 # journald는 EC2 시스템 로그(/var/log/journal, 디스크 영구 저장)에 남아 컨테이너 교체 후에도 조회 가능.
+# 2026-11-13: GPT 추론 강도를 low → none 으로 고정(environment). 비밀값이 아닌 동작 설정이라 git에 남겨
+# 팀이 보고 PR revert 로 되돌릴 수 있게 함. environment 가 env_file(.env)보다 우선하므로
+# 이 값을 바꾸려면 서버 .env 가 아니라 여기를 고쳐야 한다.
 services:
   ai-server:
     build: .
@@ -12,6 +15,10 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      # 11-13 생활사진 72장 측정(gpt-5.5): 품목 정답 low 75/112 = none 75/112, 상태값 차이는
+      # low 끼리 두 번 돌린 편차(88% 일치)와 비슷(none 82%). 사진당 9.6s → 5.6s, 출력 토큰 315 → 99.
+      OPENAI_REASONING_EFFORT: none
     volumes:
       - ./models:/app/models:ro
     logging:
