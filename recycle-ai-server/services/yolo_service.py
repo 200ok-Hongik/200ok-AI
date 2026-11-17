@@ -1,8 +1,13 @@
+# 2026-11-15 변경 요약: main.py 가 YOLO 를 asyncio.to_thread 로 여러 스레드에서 동시에 부르게 되면서,
+# 모델 하나(_model)를 같이 쓰는 스레드끼리 충돌하지 않도록 로딩·추론을 threading.Lock 으로 한 번에 하나만 실행하게 함.
+# (Ultralytics 공식 가이드: 모델 인스턴스 하나를 여러 스레드가 공유하면 내부 상태가 깨질 수 있음
+#  https://docs.ultralytics.com/guides/yolo-thread-safe-inference/ ) GPT 대기는 잠금 밖이라 그대로 병렬로 돈다.
 # 2026-09-27 변경 요약: 8클래스 통합 모델(best.pt, 클래스명이 대문자 CLEAR_PET_BOTTLE/PLASTIC/CAN/
 # GLASS_BOTTLE/VINYL/PAPER/STYROFOAM/PAPER_PACK)을 붙이기 위해 클래스명 조회를 대소문자 무관하게
 # 바꾸고 clear_pet_bottle 별칭을 추가함. (이전엔 대문자 이름이 매핑에서 빠져 전부 UNKNOWN으로 나옴)
 import io
 import os
+import threading  # 2026-11-15: 스레드 간 YOLO 모델 공유 보호용 잠금
 from pathlib import Path
 from typing import Any
 
@@ -52,22 +57,28 @@ NMS_IOU_THRESHOLD = 0.7
 SMALL_OBJECT_AREA_RATIO = 0.01
 
 _model: YOLO | None = None
+# 2026-11-15: 모델 로딩과 predict 를 한 번에 한 스레드만 하도록 막는 잠금.
+# 요청마다 모델을 따로 만들면 메모리가 늘고, YOLO 는 1건에 1초 안팎이라 줄을 서도 GPT(수 초) 대비 손해가 작음.
+_model_lock = threading.Lock()
 
 
 def _get_model() -> YOLO:
     global _model
 
     if _model is None:
-        model_path = os.getenv("YOLO_MODEL_PATH", "models/best.pt")
-        resolved_path = Path(model_path)
+        # 2026-11-15: 서버 막 켜진 직후 동시 요청 두 개가 모델을 두 번 로딩하지 않도록 잠금 안에서 한 번 더 확인
+        with _model_lock:
+            if _model is None:
+                model_path = os.getenv("YOLO_MODEL_PATH", "models/best.pt")
+                resolved_path = Path(model_path)
 
-        if not resolved_path.exists():
-            raise FileNotFoundError(
-                f"YOLO model file not found: {resolved_path}. "
-                "Set YOLO_MODEL_PATH in .env or place best.pt under models/."
-            )
+                if not resolved_path.exists():
+                    raise FileNotFoundError(
+                        f"YOLO model file not found: {resolved_path}. "
+                        "Set YOLO_MODEL_PATH in .env or place best.pt under models/."
+                    )
 
-        _model = YOLO(str(resolved_path))
+                _model = YOLO(str(resolved_path))
 
     return _model
 
@@ -188,13 +199,15 @@ def _draw_numbered_bboxes(image: Image.Image, detections: list[dict[str, Any]]) 
 
 def _collect_detections(model: YOLO, image: Image.Image, conf_threshold: float | None = None) -> list[dict[str, Any]]:
     threshold = _get_conf_threshold() if conf_threshold is None or conf_threshold <= 0 else conf_threshold
-    results = model.predict(
-        source=image,
-        imgsz=_get_img_size(),
-        conf=threshold,
-        save=False,
-        verbose=False,
-    )
+    # 2026-11-15: 같은 모델 객체로 여러 스레드가 동시에 predict 하면 내부 상태가 섞일 수 있어 잠금 안에서만 실행
+    with _model_lock:
+        results = model.predict(
+            source=image,
+            imgsz=_get_img_size(),
+            conf=threshold,
+            save=False,
+            verbose=False,
+        )
 
     result = results[0]
     detections: list[dict[str, Any]] = []
