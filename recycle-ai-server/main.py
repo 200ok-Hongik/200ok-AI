@@ -1,6 +1,11 @@
+# 2026-11-15: async def 엔드포인트 안에서 동기 함수(YOLO 추론·OpenAI 동기 클라이언트 호출)를 그대로 부르면
+# 그동안 이벤트 루프 전체가 멈춰서, 동시 요청이 한 줄로 서서 하나씩 처리됐음(가짜 GPT 3초 실측: 동시 3건 4→8→12.7초).
+# 무거운 동기 호출을 asyncio.to_thread 로 별도 스레드에 넘겨 기다리는 동안 다른 요청을 받을 수 있게 함.
+# 응답 JSON 계약·분석 순서는 바꾸지 않음. YOLO 모델 공유 보호는 services/yolo_service.py 의 잠금 참고.
 # 2026-10-09: /analyze 응답의 물체 요약(objectId/탐지 주체/YOLO 클래스/GPT 품목·이름/bbox)과 HIGH 재분석 이유를
 # 서버 로그에 남기도록 _log_analysis_summary 추가 - 응답 본문이 로그에 없어 앱 화면 없이는 중복·오인식 원인을
 # 알 수 없었기 때문. 사진·상태값·키 같은 민감/대용량 정보는 남기지 않음.
+import asyncio  # 2026-11-15: 동기 호출을 스레드로 넘기는 asyncio.to_thread 용
 import json
 import logging
 import time
@@ -78,7 +83,9 @@ async def analyze_full_pipeline(
             raise ValueError("image file is empty.")
 
         yolo_started_at = time.perf_counter()
-        yolo_result, annotated_image_bytes, annotated_mime_type = run_yolo_multi_object(
+        # 2026-11-15: YOLO 추론은 CPU 를 쓰는 동기 함수라 스레드로 넘김 (이벤트 루프를 막지 않게)
+        yolo_result, annotated_image_bytes, annotated_mime_type = await asyncio.to_thread(
+            run_yolo_multi_object,
             image_bytes=image_bytes,
             mime_type=image.content_type or "image/jpeg",
         )
@@ -89,7 +96,9 @@ async def analyze_full_pipeline(
         )
 
         low_started_at = time.perf_counter()
-        low_vlm_result = analyze_numbered_original_image(
+        # 2026-11-15: GPT 응답 대기(수 초)가 가장 길어서, 이 동안 다른 요청을 처리할 수 있게 스레드로 넘김
+        low_vlm_result = await asyncio.to_thread(
+            analyze_numbered_original_image,
             image_bytes=annotated_image_bytes,
             yolo_objects=yolo_result["objects"],
             mime_type=annotated_mime_type,
@@ -103,7 +112,9 @@ async def analyze_full_pipeline(
 
         if should_use_high:
             high_started_at = time.perf_counter()
-            final_vlm_result = analyze_numbered_original_image(
+            # 2026-11-15: high 재분석도 같은 이유로 스레드에서 대기
+            final_vlm_result = await asyncio.to_thread(
+                analyze_numbered_original_image,
                 image_bytes=annotated_image_bytes,
                 yolo_objects=yolo_result["objects"],
                 mime_type=annotated_mime_type,
@@ -155,7 +166,9 @@ async def analyze_ai2_only(
         if not crop_bytes:
             raise ValueError("crop image file is empty.")
 
-        state_result = analyze_pet_bottle_image(
+        # 2026-11-15: 예전 단일 물체 경로도 GPT 동기 호출이라 /analyze 와 같이 스레드로 넘김
+        state_result = await asyncio.to_thread(
+            analyze_pet_bottle_image,
             image_bytes=crop_bytes,
             mime_type=crop.content_type or "image/jpeg",
         )
@@ -184,7 +197,9 @@ async def debug_yolo(
         if not image_bytes:
             raise ValueError("image file is empty.")
 
-        return debug_yolo_detection(
+        # 2026-11-15: 디버그용 YOLO 추론도 이벤트 루프를 막지 않게 스레드로 넘김
+        return await asyncio.to_thread(
+            debug_yolo_detection,
             image_bytes=image_bytes,
             conf_threshold=conf_threshold,
         )
