@@ -35,9 +35,11 @@ DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.5")
 #   있었음. 타임아웃을 넉넉히 두고 재시도는 1회로 제한해서, 오래 걸리는 요청을 버리고 다시 시작하지 않게 함.
 # - 추론 강도: OPENAI_REASONING_EFFORT 로 조절. 비워 두면 reasoning 옵션을 보내지 않음(모델 기본값,
 #   추론을 지원하지 않는 모델로 바꿀 때 사용).
+# - 2026-11-13: 기본값 low → none. 생활사진 72장 측정에서 품목 정답은 같고(75/112) 사진당 9.6s → 5.6s.
+#   운영(EC2)은 docker-compose.yml environment 에서 none 으로 고정하고, 여기 기본값은 로컬 실행을 맞추는 용도.
 OPENAI_TIMEOUT_SECONDS = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "120"))
 OPENAI_MAX_RETRIES = int(os.getenv("OPENAI_MAX_RETRIES", "1"))
-OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "low").strip()
+OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "none").strip()  # 11-13: low → none
 # OpenAI 이미지 가이드(developers.openai.com/api/docs/guides/images-vision) 기준 gpt-5.5의 high 처리 한도:
 # 긴 변 2048px, 32x32 패치 2,500개. 이보다 큰 이미지는 OpenAI가 어차피 이 크기로 줄여서 본다.
 # VLM_MAX_IMAGE_SIDE=0 이면 줄이지 않음(이전 동작으로 되돌리기용).
