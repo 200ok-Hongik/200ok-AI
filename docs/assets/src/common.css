@@ -1,0 +1,41 @@
+/*
+ * README 그림 공통 스타일
+ * - 색: SSOK 앱 테마(200ok-FE src/constants/theme.ts Colors·CategoryColors) 값 그대로
+ * - 글꼴: 앱과 같은 Pretendard (SIL OFL 1.1). 렌더링 때 fonts/ 로 잠깐 복사해 씀 (저장소에는 안 올림)
+ */
+@font-face { font-family: "Pretendard"; src: url("fonts/Pretendard-Regular.otf"); font-weight: 400; }
+@font-face { font-family: "Pretendard"; src: url("fonts/Pretendard-Medium.otf"); font-weight: 500; }
+@font-face { font-family: "Pretendard"; src: url("fonts/Pretendard-SemiBold.otf"); font-weight: 600; }
+@font-face { font-family: "Pretendard"; src: url("fonts/Pretendard-Bold.otf"); font-weight: 700; }
+@font-face { font-family: "Pretendard"; src: url("fonts/Pretendard-ExtraBold.otf"); font-weight: 800; }
+
+:root {
+  --bg: #FFFFFF;
+  --surface: #F7F8FA;          /* backgroundSoft */
+  --line: #E5E7EB;             /* border */
+  --text: #111827;
+  --sub: #6B7280;              /* textSecondary */
+  --muted: #9CA3AF;            /* textTertiary */
+  --accent: #22C55E;           /* primary */
+  --accent-ink: #16A34A;       /* primaryDark - 흰 배경 위 글자용 */
+  --accent-soft: #DCFCE7;      /* primaryLight */
+  --mint: #ECFDF5;
+  --warn-bg: #FEF3E2;
+  --warn: #B45309;
+  --dark: #0B0F0E;             /* scanDark */
+  /* 품목 색 (CategoryColors) */
+  --c-plastic: #22C55E; --c-glass: #0EA5E9; --c-can: #F59E0B;
+  --c-paper: #8B5CF6; --c-vinyl: #64748B; --c-styro: #EC4899;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: transparent; }
+body { font-family: "Pretendard", sans-serif; color: var(--text); -webkit-font-smoothing: antialiased; }
+
+.card { background: var(--bg); border: 1.5px solid var(--line); border-radius: 24px; }
+.title { font-size: 26px; font-weight: 800; letter-spacing: -0.3px; }
+.caption { font-size: 15px; color: var(--muted); }
+.head { display: flex; align-items: baseline; gap: 14px; }
+.ico { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.chip { display: inline-block; font-size: 13px; font-weight: 700; padding: 5px 11px; border-radius: 999px; background: var(--surface); color: var(--sub); }
+.chip.on { background: var(--accent); color: #fff; }
