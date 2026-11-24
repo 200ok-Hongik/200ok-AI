@@ -1,0 +1,54 @@
+<!doctype html>
+<!--
+  README YOLO 학습(파인튜닝) 흐름 그림 → docs/assets/training.png (1200×430, 2배 해상도)
+  - training/train_yolo.py 흐름: Drive 합본 캐시 복원 → 새 품목 폴더만 받아 합침 → START_WEIGHTS(이전 버전)에서 FINETUNE_EPOCHS(20) 학습
+    → 에폭마다 last.pt 를 Drive 에 저장(세션 끊기면 이어서) → 같은 실험 세트로 비교 → 나아졌을 때만 models/best.pt 교체 PR
+  - 아래 비교: 처음부터 학습(v1, yolov8n 에서 50에폭) vs 파인튜닝(v3·v4, 이전 버전에서 20에폭)
+-->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="common.css">
+<style>
+  body { width: 1200px; height: 430px; }
+  .card { width: 1200px; height: 430px; padding: 34px 40px; }
+  .head { margin-bottom: 22px; }
+  .row { display: flex; align-items: stretch; }
+  .step { flex: 1; background: var(--surface); border-radius: 18px; padding: 18px 16px; }
+  .step.on { background: var(--accent-soft); }
+  .n { font-size: 14px; font-weight: 800; color: var(--accent-ink); margin-bottom: 4px; }
+  h3 { font-size: 18.5px; font-weight: 800; letter-spacing: -0.3px; margin-bottom: 8px; }
+  p { font-size: 13.8px; line-height: 21px; color: var(--sub); }
+  .where { display: inline-block; margin-top: 10px; font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: #fff; color: var(--accent-ink); }
+  .gap { width: 22px; display: grid; place-items: center; color: #B4B8C2; }
+  .gap svg { width: 18px; height: 18px; }
+  .cmp { display: flex; gap: 14px; margin-top: 22px; }
+  .box { flex: 1; border: 1.5px solid var(--line); border-radius: 18px; padding: 16px 20px; display: flex; gap: 16px; align-items: center; }
+  .box.on { border-color: var(--accent); background: var(--mint); }
+  .tag { flex: none; font-size: 13px; font-weight: 800; padding: 6px 12px; border-radius: 999px; background: var(--surface); color: var(--sub); }
+  .box.on .tag { background: var(--accent); color: #fff; }
+  .box h4 { font-size: 16.5px; font-weight: 800; margin-bottom: 4px; }
+  .box p { font-size: 13.5px; line-height: 20px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="head"><span class="title">YOLO 학습 · 파인튜닝</span><span class="caption">이미 배포 중인 모델에서 출발해, 부족한 품목 데이터만 더해 이어서 학습</span></div>
+  <div class="row">
+    <div class="step"><div class="n">1</div><h3>데이터 준비</h3><p>공개 데이터 변환<br>형식 통일 · 중복 라벨 제거<br>라벨 빠진 사진 제외</p><span class="where">PC</span></div>
+    <div class="gap"><svg class="ico" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
+    <div class="step"><div class="n">2</div><h3>Drive 에 올림</h3><p>품목별 폴더<br>기존 합본 데이터는<br>캐시로 보관</p><span class="where">Google Drive</span></div>
+    <div class="gap"><svg class="ico" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
+    <div class="step on"><div class="n">3</div><h3>이어서 학습</h3><p>시작점 = 배포 중 모델<br>기존 + 새 데이터 섞어<br>20에폭, 에폭마다 저장</p><span class="where">Colab GPU</span></div>
+    <div class="gap"><svg class="ico" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
+    <div class="step on"><div class="n">4</div><h3>같은 사진으로 비교</h3><p>학습에 안 쓴 생활사진<br>이전 모델과 품목별 비교<br>나빠진 사진 확인</p><span class="where">PC · bench</span></div>
+    <div class="gap"><svg class="ico" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
+    <div class="step"><div class="n">5</div><h3>교체 · 배포</h3><p>나아졌을 때만<br>models/best.pt 교체 PR<br>머지하면 자동 배포</p><span class="where">GitHub → EC2</span></div>
+  </div>
+  <div class="cmp">
+    <div class="box"><span class="tag">처음부터</span><div><h4>기본 YOLO(yolov8n)에서 학습 (v1, v2)</h4><p>8품목을 처음 배우는 단계 · 수십 에폭 · 몇 시간 · 세션이 끊기면 위험</p></div></div>
+    <div class="box on"><span class="tag">파인튜닝</span><div><h4>이전 버전에서 20에폭 (v3, v4)</h4><p>아는 품목은 유지, 부족한 품목만 보강 · 끊겨도 Drive에서 이어서</p></div></div>
+  </div>
+</div>
+</body>
+</html>

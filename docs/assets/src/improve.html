@@ -1,0 +1,63 @@
+<!doctype html>
+<!--
+  README 개선 방식 그림 → docs/assets/improve.png (1200×480, 2배 해상도)
+  - 왼쪽: 측정 → 원인 분류 → 처방 → 재측정 반복 (bench/benchmark.py, bench/sets/)
+  - 오른쪽: 실제로 잰 전후 수치 (출처: work-log·PR 본문)
+      생활사진 탐지 mAP50 0.038 → 0.406 (v1 → v2, 2026-11-12, 생활 val 416장)
+      GPT 1회 응답 9.6s → 5.6s (추론 강도 low → none, PR #13, 생활사진 72장, 품목 정답 수 동일)
+      GPT 출력 토큰 554 → 354 (출력 JSON 축소, PR #10)
+      동시 요청 3건 12.7s → 약 5s (PR #14, GPT 3초 가짜 응답으로 측정)
+-->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="common.css">
+<style>
+  body { width: 1200px; height: 480px; }
+  .card { width: 1200px; height: 480px; padding: 36px 40px; display: flex; flex-direction: column; }
+  .head { margin-bottom: 24px; }
+  .wrap { display: flex; gap: 28px; flex: 1; }
+  .loop { width: 470px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; position: relative; }
+  .st { background: var(--surface); border-radius: 18px; padding: 18px; }
+  .st.on { background: var(--accent-soft); }
+  .st .n { font-size: 14px; font-weight: 800; color: var(--accent-ink); margin-bottom: 5px; }
+  .st h3 { font-size: 19px; font-weight: 800; margin-bottom: 8px; letter-spacing: -0.3px; }
+  .st p { font-size: 14px; line-height: 22px; color: var(--sub); }
+  .nums { flex: 1; display: flex; flex-direction: column; gap: 12px; }
+  .m { background: #fff; border: 1.5px solid var(--line); border-radius: 18px; padding: 15px 20px; display: flex; align-items: center; gap: 16px; }
+  .m .what { width: 230px; }
+  .m .what h4 { font-size: 16.5px; font-weight: 800; margin-bottom: 3px; }
+  .m .what p { font-size: 13px; color: var(--muted); }
+  .bars { flex: 1; display: flex; flex-direction: column; gap: 7px; }
+  .bar { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--sub); }
+  .bar i { display: block; height: 14px; border-radius: 7px; background: #D1D5DB; }
+  .bar.after i { background: var(--accent); }
+  .bar b { white-space: nowrap; font-size: 15px; color: var(--text); font-weight: 800; }
+  .bar.after b { color: var(--accent-ink); }
+  .bar span { width: 34px; flex: none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="head"><span class="title">측정으로 고치기</span><span class="caption">학습에 쓰지 않은 생활사진으로 재고, 틀린 이유를 단계별로 나눠 처방</span></div>
+  <div class="wrap">
+    <div class="loop">
+      <div class="st on"><div class="n">1 · 측정</div><h3>실험 세트로 측정</h3><p>앱과 같은 과정을 그대로 실행<br>정답률 · 단계별 시간 · 틀린 사진</p></div>
+      <div class="st"><div class="n">2 · 원인</div><h3>어디서 틀렸나</h3><p>YOLO가 틀렸나, GPT가 틀렸나<br>틀린 유형별로 몇 장인지</p></div>
+      <div class="st"><div class="n">4 · 재측정 → 다시 1로</div><h3>같은 사진으로 비교</h3><p>좋아진 사진·나빠진 사진 확인<br>나아졌을 때만 반영</p></div>
+      <div class="st on"><div class="n">3 · 처방</div><h3>원인에 맞게 수정</h3><p>판단 규칙 → 서버 코드<br>지식 부족 → 데이터 보충 재학습<br>GPT 판단 → 프롬프트</p></div>
+    </div>
+    <div class="nums">
+      <div class="m"><div class="what"><h4>생활사진 탐지 점수</h4><p>YOLO v1 → v2 · 생활사진 데이터 추가</p></div>
+        <div class="bars"><div class="bar"><span>전</span><i style="width:8px"></i><b>0.04</b></div><div class="bar after"><span>후</span><i style="width:170px"></i><b>0.41</b></div></div></div>
+      <div class="m"><div class="what"><h4>GPT 1회 응답 시간</h4><p>추론 강도 low → none · 정답 수 동일</p></div>
+        <div class="bars"><div class="bar"><span>전</span><i style="width:200px"></i><b>9.6초</b></div><div class="bar after"><span>후</span><i style="width:117px"></i><b>5.6초</b></div></div></div>
+      <div class="m"><div class="what"><h4>GPT 출력 길이</h4><p>응답 JSON 축소 · 토큰 수</p></div>
+        <div class="bars"><div class="bar"><span>전</span><i style="width:200px"></i><b>554</b></div><div class="bar after"><span>후</span><i style="width:128px"></i><b>354</b></div></div></div>
+      <div class="m"><div class="what"><h4>동시 요청 3건 처리</h4><p>줄 서서 기다리던 것을 병렬로</p></div>
+        <div class="bars"><div class="bar"><span>전</span><i style="width:200px"></i><b>12.7초</b></div><div class="bar after"><span>후</span><i style="width:79px"></i><b>약 5초</b></div></div></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

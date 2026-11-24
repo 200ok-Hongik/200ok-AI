@@ -1,0 +1,70 @@
+<!doctype html>
+<!--
+  README 분석 흐름 그림 → docs/assets/flow.png (1200×400, 2배 해상도)
+  - main.py /analyze 순서 그대로: YOLO → GPT 1차(low) → 조건에 걸릴 때만 GPT 2차(high) → 결과
+  - 시간은 bench/ 실측 (life_mix 103장, 2026-11-24: YOLO 0.1s, GPT low 3.1s, high 3.3s, 평균 4.8s, high 50%)
+  - 2차 재분석 조건은 result_builder.should_reanalyze_high
+-->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="common.css">
+<style>
+  body { width: 1200px; height: 400px; }
+  .card { width: 1200px; height: 400px; padding: 36px 40px; }
+  .head { margin-bottom: 26px; }
+  .row { display: flex; align-items: stretch; }
+  .step { flex: 1; background: var(--surface); border-radius: 20px; padding: 20px 18px; }
+  .step.on { background: var(--accent-soft); }
+  .step.opt { background: #fff; border: 2px dashed #A7E9BE; }
+  .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .icon { width: 46px; height: 46px; border-radius: 14px; background: var(--bg); color: var(--accent-ink); display: grid; place-items: center; }
+  .step.on .icon { background: var(--accent); color: #fff; }
+  .time { font-size: 13.5px; font-weight: 700; padding: 5px 10px; border-radius: 999px; background: #fff; color: var(--accent-ink); }
+  .num { font-size: 15px; font-weight: 800; color: var(--accent-ink); margin-bottom: 4px; }
+  h3 { font-size: 20px; font-weight: 800; letter-spacing: -0.3px; margin-bottom: 9px; }
+  p { font-size: 14.5px; line-height: 23px; color: var(--sub); }
+  .gap { width: 26px; display: grid; place-items: center; color: #B4B8C2; }
+  .gap svg { width: 20px; height: 20px; }
+  .foot { margin-top: 20px; display: flex; gap: 10px; align-items: center; font-size: 15px; color: var(--sub); }
+  .foot b { color: var(--text); }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="head"><span class="title">분석 흐름</span><span class="caption">POST /analyze · 빠른 1차 판단 후, 애매할 때만 자세히 다시 봄</span></div>
+  <div class="row">
+    <div class="step">
+      <div class="top"><div class="icon"><svg class="ico" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></div></div>
+      <div class="num">1</div><h3>사진 받기</h3>
+      <p>휴대폰 회전값 보정<br>GPT가 실제로 보는<br>크기로 미리 축소</p>
+    </div>
+    <div class="gap"><svg class="ico" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
+    <div class="step on">
+      <div class="top"><div class="icon"><svg class="ico" viewBox="0 0 24 24" style="stroke-width:2.2"><rect x="4" y="4" width="9" height="9" rx="1.5"/><rect x="11" y="11" width="9" height="9" rx="1.5"/></svg></div><span class="time">0.1초</span></div>
+      <div class="num">2</div><h3>YOLO 탐지</h3>
+      <p>물체마다 박스·품목<br>겹친 박스 정리 후<br>번호를 그려 넣음</p>
+    </div>
+    <div class="gap"><svg class="ico" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
+    <div class="step on">
+      <div class="top"><div class="icon"><svg class="ico" viewBox="0 0 24 24" style="stroke-width:2.2"><path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.5"/></svg></div><span class="time">약 3초</span></div>
+      <div class="num">3</div><h3>GPT 1차 (low)</h3>
+      <p>번호 사진을 저해상도로<br>품목 재확인 + 상태 판단<br>놓친 물체 추가</p>
+    </div>
+    <div class="gap"><svg class="ico" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
+    <div class="step opt">
+      <div class="top"><div class="icon"><svg class="ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5M11 8v6M8 11h6"/></svg></div><span class="time">+약 3초</span></div>
+      <div class="num">4 · 필요할 때만</div><h3>GPT 2차 (high)</h3>
+      <p>YOLO와 품목이 다름<br>너무 작거나 흐림<br>박스에 물체 여러 개</p>
+    </div>
+    <div class="gap"><svg class="ico" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
+    <div class="step">
+      <div class="top"><div class="icon"><svg class="ico" viewBox="0 0 24 24"><path d="M8 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h2M16 4h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-2"/><path d="M9 12h6"/></svg></div></div>
+      <div class="num">5</div><h3>결과 JSON</h3>
+      <p>물체별 품목·상태·박스<br>사용자 확인이 필요한<br>이유와 함께 백엔드로</p>
+    </div>
+  </div>
+  <div class="foot"><span class="chip on">실측</span>생활사진 103장 평균 <b>4.8초</b> · 2차까지 간 사진 <b>50%</b> · 동시 요청은 병렬 처리</div>
+</div>
+</body>
+</html>

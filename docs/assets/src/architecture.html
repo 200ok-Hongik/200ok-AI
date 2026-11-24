@@ -1,0 +1,58 @@
+<!doctype html>
+<!--
+  README 시스템 구성·배포 그림 → docs/assets/architecture.png (1200×470, 2배 해상도)
+  - 위: 요청 흐름 (SSOK 앱 → 200ok-BE → 이 AI 서버 → OpenAI), BE 기본 AI_SERVER_URL 설정 기준
+  - 아래: 배포 (.github/workflows/deploy-ai-ec2.yml) main 머지 → GitHub Actions(OIDC) → SSM → EC2 에서 docker compose up --build → /health
+  - 모델 학습은 서버 밖(Colab + Google Drive, training/train_yolo.py), 결과 best.pt 만 PR 로 교체
+-->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="common.css">
+<style>
+  body { width: 1200px; height: 470px; }
+  .card { width: 1200px; height: 470px; padding: 34px 40px; }
+  .head { margin-bottom: 22px; }
+  .lane { font-size: 14px; font-weight: 800; color: var(--accent-ink); margin: 0 0 10px 4px; }
+  .row { display: flex; align-items: center; gap: 0; margin-bottom: 26px; }
+  .node { background: var(--surface); border-radius: 18px; padding: 16px 18px; min-height: 108px; }
+  .node.me { background: var(--accent-soft); border: 2px solid var(--accent); }
+  .node h3 { font-size: 18px; font-weight: 800; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  .node p { font-size: 13.5px; line-height: 21px; color: var(--sub); }
+  .arrow { width: 66px; flex: none; text-align: center; color: #9CA3AF; font-size: 12px; font-weight: 700; }
+  .arrow svg { width: 34px; height: 18px; display: block; margin: 0 auto 2px; }
+  .inner { display: flex; gap: 8px; margin-top: 8px; }
+  .inner span { background: #fff; border-radius: 10px; padding: 6px 10px; font-size: 13px; font-weight: 700; color: var(--accent-ink); }
+  .note { font-size: 13.5px; color: var(--muted); margin-top: -12px; margin-left: 4px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="head"><span class="title">시스템 구성 · 배포</span><span class="caption">AI 서버는 판단만, 배출 규칙 적용과 저장은 백엔드</span></div>
+
+  <div class="lane">요청 흐름</div>
+  <div class="row">
+    <div class="node" style="width:200px"><h3>SSOK 앱</h3><p>촬영 · 결과 확인<br>틀린 품목 직접 수정</p></div>
+    <div class="arrow"><svg viewBox="0 0 34 18"><path d="M2 9h28M24 3l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2"/></svg>사진</div>
+    <div class="node" style="width:230px"><h3>200ok 백엔드</h3><p>Spring Boot<br>배출 규칙 매핑 · 기록 저장</p></div>
+    <div class="arrow"><svg viewBox="0 0 34 18"><path d="M2 9h28M24 3l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2"/></svg>/analyze</div>
+    <div class="node me" style="width:310px"><h3>AI 서버 (이 저장소)</h3><p>FastAPI · 물체별 품목·상태 JSON</p>
+      <div class="inner"><span>YOLO v3 (CPU)</span><span>결과 조립·검증</span></div></div>
+    <div class="arrow"><svg viewBox="0 0 34 18"><path d="M2 9h28M24 3l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2"/></svg>이미지</div>
+    <div class="node" style="width:150px"><h3>OpenAI</h3><p>GPT 이미지 판단<br>low / high</p></div>
+  </div>
+
+  <div class="lane">배포 · 모델 교체</div>
+  <div class="row">
+    <div class="node" style="width:200px"><h3>main 머지</h3><p>PR 리뷰 후 머지<br>모델 교체도 PR로</p></div>
+    <div class="arrow"><svg viewBox="0 0 34 18"><path d="M2 9h28M24 3l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2"/></svg></div>
+    <div class="node" style="width:230px"><h3>GitHub Actions</h3><p>OIDC 역할로 AWS 인증<br>저장소에 AWS 키 없음</p></div>
+    <div class="arrow"><svg viewBox="0 0 34 18"><path d="M2 9h28M24 3l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2"/></svg>SSM</div>
+    <div class="node me" style="width:310px"><h3>AWS EC2 (서울)</h3><p>코드 받기 → docker compose 재빌드<br>/health 확인 후 완료, 실패하면 로그 출력</p></div>
+    <div class="arrow"><svg viewBox="0 0 34 18"><path d="M32 9H4M10 3L4 9l6 6" fill="none" stroke="currentColor" stroke-width="2"/></svg>best.pt</div>
+    <div class="node" style="width:150px"><h3>모델 학습</h3><p>Colab GPU<br>데이터는 Drive</p></div>
+  </div>
+  <div class="note">API 키(OPENAI_API_KEY)는 서버의 .env 에만 보관</div>
+</div>
+</body>
+</html>
