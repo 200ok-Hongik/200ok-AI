@@ -1,3 +1,4 @@
+# 2026-11-26: high 재분석 호출에 hide_yolo_category 전달 - YOLO 품목 힌트 없이 이미지만 보고 판단 (openai_vision_service 상단 참고)
 # 2026-11-15: async def 엔드포인트 안에서 동기 함수(YOLO 추론·OpenAI 동기 클라이언트 호출)를 그대로 부르면
 # 그동안 이벤트 루프 전체가 멈춰서, 동시 요청이 한 줄로 서서 하나씩 처리됐음(가짜 GPT 3초 실측: 동시 3건 4→8→12.7초).
 # 무거운 동기 호출을 asyncio.to_thread 로 별도 스레드에 넘겨 기다리는 동안 다른 요청을 받을 수 있게 함.
@@ -14,7 +15,11 @@ from typing import Any
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from openai import APITimeoutError
 
-from services.openai_vision_service import analyze_numbered_original_image, analyze_pet_bottle_image
+from services.openai_vision_service import (
+    VLM_HIGH_HIDE_YOLO_HINT,  # 11-26 추가
+    analyze_numbered_original_image,
+    analyze_pet_bottle_image,
+)
 from services.result_builder import (
     build_analysis_result,
     build_multi_object_analysis_result,
@@ -119,6 +124,7 @@ async def analyze_full_pipeline(
                 yolo_objects=yolo_result["objects"],
                 mime_type=annotated_mime_type,
                 detail="high",
+                hide_yolo_category=VLM_HIGH_HIDE_YOLO_HINT,  # 11-26: YOLO·GPT가 엇갈린 경우라 YOLO 품목은 빼고 다시 봄
             )
             detail_used = "high"
             logger.info("analysis vlm_high_ms=%s", _elapsed_ms(high_started_at))

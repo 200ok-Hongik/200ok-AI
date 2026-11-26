@@ -1,3 +1,7 @@
+# 2026-11-26: high 재분석 때는 YOLO 품목 힌트(categoryCode·yoloClass·classId·confidence)를 빼고 번호·bbox만 보냄
+# (hide_yolo_category). life_mix 103장(v4) 오답 중 h_pack_02·pet_08·s_glass_09 는 low 에서 GPT 가 YOLO 와 다르게
+# 답해 high 로 넘어갔는데, high 에서 YOLO 품목을 다시 보고 틀린 YOLO 답으로 돌아섰음. high 는 YOLO·GPT 가 엇갈린
+# 경우에만 도는 단계라 GPT 가 이미지만 보고 판단하게 함. VLM_HIGH_HIDE_YOLO_HINT=0 이면 이전 동작.
 # 2026-11-06: GPT 응답을 펼칠 때 categoryCode를 8품목 대문자/UNKNOWN으로 정리(_normalize_category_code_field) -
 # "can"·"BATTERY"가 YOLO 탐지 물체 쪽으로 그대로 나가 백엔드 품목 조회가 실패할 수 있었고, 소문자 같은 품목도
 # YOLO와 불일치로 잡혀 불필요한 high 재분석이 일어났음.
@@ -47,6 +51,10 @@ VLM_MAX_IMAGE_SIDE = int(os.getenv("VLM_MAX_IMAGE_SIDE", "2048"))
 VLM_MAX_IMAGE_PATCHES = int(os.getenv("VLM_MAX_IMAGE_PATCHES", "2500"))
 VLM_JPEG_QUALITY = int(os.getenv("VLM_JPEG_QUALITY", "85"))
 _PATCH_SIZE = 32
+# (11-26 추가) high 재분석 때 YOLO 품목 힌트를 뺄지 - 기본 켬, "0"이면 끔(되돌리기용)
+VLM_HIGH_HIDE_YOLO_HINT = os.getenv("VLM_HIGH_HIDE_YOLO_HINT", "1").strip() != "0"
+_YOLO_HINT_FIELDS = ("categoryCode", "yoloClass", "classId", "confidence")  # (11-26 추가) 숨길 때 빼는 필드 (classId도 품목 번호)
+_HIDDEN_HINT_NOTE = "참고: 이번 YOLO 객체 목록에는 번호와 bbox만 있고 품목 정보는 없다. 품목은 이미지만 보고 판단해."  # (11-26 추가)
 
 
 def _vlm_target_size(width: int, height: int) -> tuple[int, int]:
@@ -267,6 +275,7 @@ def analyze_numbered_original_image(
     mime_type: str = "image/jpeg",
     detail: str = "low",
     model: str = DEFAULT_MODEL,
+    hide_yolo_category: bool = False,  # (11-26 추가) True면 YOLO 품목 힌트를 빼고 번호·bbox만 보냄
 ) -> dict[str, Any]:
     """
     YOLO 번호 bbox가 표시된 원본 이미지를 GPT Vision에 보내
@@ -283,6 +292,10 @@ def analyze_numbered_original_image(
     if scale != 1.0:
         for item in vlm_yolo_objects:
             item["bbox"] = _scale_bbox(item.get("bbox"), scale)
+    if hide_yolo_category:  # (11-26 추가) GPT에 보내는 사본에서만 품목 필드를 뺌 (서버 쪽 YOLO 비교는 원본 리스트 그대로)
+        for item in vlm_yolo_objects:
+            for field in _YOLO_HINT_FIELDS:
+                item.pop(field, None)
     prompt = (
         f"{MULTI_OBJECT_STATE_PROMPT}\n\n"
         # detail 값이 곧 프롬프트의 "low"/"high" 단계라서 그대로 알려준다
@@ -291,6 +304,8 @@ def analyze_numbered_original_image(
         # 들여쓰기 없이 보냄 - 줄바꿈·공백도 입력 토큰이라 물체가 많을수록 손해
         f"{json.dumps(vlm_yolo_objects, ensure_ascii=False, separators=(',', ':'))}"
     )
+    if hide_yolo_category:
+        prompt += f"\n\n{_HIDDEN_HINT_NOTE}"  # (11-26 추가) 품목 정보가 없다는 안내
 
     response = client.responses.create(
         model=model,
