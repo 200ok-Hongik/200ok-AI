@@ -1,6 +1,10 @@
 """
 AI 서버 /analyze 속도·결과 벤치마크.
 
+(2026-11-21 수정) --set NAME 옵션 추가 - bench/sets/NAME/images, labels.json 을 따로 쓰는 사진 세트.
+  기본 세트(bench/images + bench/labels.json)를 건드리지 않고 생활사진 오답 세트 같은 실험용 세트를
+  여러 개 두고 반복 실험하려고 추가함. 결과 파일에 세트 이름을 남겨 --compare 때 같은 세트 정답으로 다시 채점.
+
 실제 /analyze 코드를 그대로 실행하면서(서버를 따로 띄울 필요 없음) 단계별 시간,
 GPT 호출 횟수(high 재분석 여부), GPT로 보낸 이미지 크기, 토큰 수, 분석 결과를 기록한다.
 개선을 하나 적용할 때마다 같은 사진 세트로 돌리고 --compare로 이전 결과와 비교한다.
@@ -22,6 +26,7 @@ GPT 호출 횟수(high 재분석 여부), GPT로 보낸 이미지 크기, 토큰
   python bench/benchmark.py --label baseline              # 사진마다 1회
   python bench/benchmark.py --label resize --repeat 3     # 사진마다 3회 (GPT 응답 시간 편차 완화)
   python bench/benchmark.py --compare baseline resize     # 저장된 두 결과 비교 (GPT 호출 없음)
+  python bench/benchmark.py --set life_hard --label base  # bench/sets/life_hard/ 세트로 측정 (2026-11-21 추가)
 
 결과는 bench/results/<label>.json 에 저장된다.
 """
@@ -43,6 +48,8 @@ SERVER_DIR = BENCH_DIR.parent
 IMAGES_DIR = BENCH_DIR / "images"
 RESULTS_DIR = BENCH_DIR / "results"
 LABELS_PATH = BENCH_DIR / "labels.json"
+SETS_DIR = BENCH_DIR / "sets"  # (11-21 추가) --set 세트들이 있는 폴더
+CURRENT_SET: str | None = None  # (11-21 추가) 지금 쓰는 세트 이름, None 이면 기본 세트
 MIME_BY_EXT = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
 
 
@@ -125,6 +132,17 @@ def _git_version() -> str:
         return f"{commit}{' (+로컬 수정)' if dirty else ''}"
     except Exception:
         return "unknown"
+
+
+def _use_set(name: str | None) -> None:
+    """(11-21 추가) 사진·정답 경로를 bench/sets/<name>/ 으로 바꾼다. None 이면 기본 세트 그대로."""
+    global IMAGES_DIR, LABELS_PATH, CURRENT_SET
+    if not name:
+        return
+    set_dir = SETS_DIR / name
+    if not set_dir.is_dir():
+        sys.exit(f"사진 세트가 없습니다: {set_dir}")
+    IMAGES_DIR, LABELS_PATH, CURRENT_SET = set_dir / "images", set_dir / "labels.json", name
 
 
 def _load_labels() -> dict[str, list[Any]]:
@@ -282,6 +300,7 @@ def run_benchmark(label: str, repeat: int, limit: int | None) -> Path:
         "openaiModel": os.getenv("OPENAI_MODEL"),
         "codeVersion": _git_version(),
         "repeat": repeat,
+        "set": CURRENT_SET,  # (11-21 추가) --compare 때 같은 세트 정답으로 다시 채점하기 위해 기록
         "summary": summary,
         "runs": runs,
     }
@@ -413,6 +432,10 @@ def compare(label_a: str, label_b: str) -> None:
         with open(path, encoding="utf-8") as file:
             results.append(json.load(file))
     a, b = results
+    # (11-21 추가) 세트가 다른 두 결과는 비교 의미가 없으므로 막고, 저장된 세트의 정답으로 채점
+    if a.get("set") != b.get("set"):
+        sys.exit(f"사진 세트가 다릅니다: {a.get('set') or '기본'} vs {b.get('set') or '기본'}")
+    _use_set(a.get("set"))
 
     # 사진 구성이 다르면 숫자 차이가 수정 때문인지 사진 때문인지 알 수 없으므로,
     # 양쪽 결과에 모두 있는 사진만 골라서 다시 집계한다.
@@ -513,12 +536,14 @@ def main_cli(argv: list[str] | None = None) -> None:
     parser.add_argument("--label", help="이번 측정 이름 (결과 파일명). 예: baseline, resize")
     parser.add_argument("--repeat", type=int, default=1, help="사진마다 반복 횟수 (기본 1)")
     parser.add_argument("--limit", type=int, help="앞에서부터 N장만 사용 (빠른 확인용)")
+    parser.add_argument("--set", dest="set_name", help="bench/sets/<이름>/ 사진 세트 사용 (11-21 추가, 없으면 기본 세트)")
     parser.add_argument("--compare", nargs=2, metavar=("BEFORE", "AFTER"), help="저장된 두 결과 비교")
     args = parser.parse_args(argv)
 
     if args.compare:
         compare(*args.compare)
     elif args.label:
+        _use_set(args.set_name)  # (11-21 추가) 측정 전에 세트 경로로 바꿈
         run_benchmark(args.label, max(1, args.repeat), args.limit)
     else:
         parser.print_help()
