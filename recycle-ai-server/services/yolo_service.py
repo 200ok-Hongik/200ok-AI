@@ -1,3 +1,7 @@
+# 2026-11-24 변경 요약: 같은 품목 박스가 다른 박스 안에 거의 통째로 들어가 있으면(작은 박스 면적의 85% 이상)
+# 하나로 합침(_remove_duplicate_detections) - 생활사진 실험 세트(bench/sets/life_mix 103장)에서 종이 1장이
+# 박스 2~3개(=결과 물체 2~3개)로 나온 사진이 8장으로 가장 많은 오류였는데, 겹침이 IoU 0.4~0.68 이라
+# 기존 IoU 0.7 기준으로는 못 지웠음. 다른 품목끼리는(컵 안 빨대 등 실제 별개 물체일 수 있어) 그대로 둠.
 # 2026-11-15 변경 요약: main.py 가 YOLO 를 asyncio.to_thread 로 여러 스레드에서 동시에 부르게 되면서,
 # 모델 하나(_model)를 같이 쓰는 스레드끼리 충돌하지 않도록 로딩·추론을 threading.Lock 으로 한 번에 하나만 실행하게 함.
 # (Ultralytics 공식 가이드: 모델 인스턴스 하나를 여러 스레드가 공유하면 내부 상태가 깨질 수 있음
@@ -54,6 +58,8 @@ YOLO_TRANSPARENCY_HINT = {
 
 DEBUG_MAX_DETECTIONS = 20
 NMS_IOU_THRESHOLD = 0.7
+# (11-24 추가) 같은 품목 박스가 이 비율 이상 다른 박스 안에 들어가 있으면 중복으로 봄. 0이면 끔(되돌리기용)
+SAME_CLASS_CONTAINMENT_THRESHOLD = float(os.getenv("YOLO_SAME_CLASS_CONTAINMENT", "0.85"))
 SMALL_OBJECT_AREA_RATIO = 0.01
 
 _model: YOLO | None = None
@@ -136,10 +142,32 @@ def _bbox_iou(first: list[int], second: list[int]) -> float:
     return intersection_area / union_area
 
 
+def _bbox_containment(first: list[int], second: list[int]) -> float:
+    """(11-24 추가) 두 박스 중 작은 박스가 큰 박스 안에 들어간 비율 (겹친 면적 / 작은 박스 면적)."""
+    intersection_width = max(0, min(first[2], second[2]) - max(first[0], second[0]))
+    intersection_height = max(0, min(first[3], second[3]) - max(first[1], second[1]))
+    first_area = max(0, first[2] - first[0]) * max(0, first[3] - first[1])
+    second_area = max(0, second[2] - second[0]) * max(0, second[3] - second[1])
+    smaller_area = min(first_area, second_area)
+    return (intersection_width * intersection_height) / smaller_area if smaller_area else 0.0
+
+
+def _is_duplicate(detection: dict[str, Any], kept_detection: dict[str, Any]) -> bool:
+    """(11-24 추가) 기존 IoU 기준 + 같은 품목이 거의 통째로 겹치는 경우를 중복으로 판단."""
+    if _bbox_iou(detection["bbox"], kept_detection["bbox"]) >= NMS_IOU_THRESHOLD:
+        return True
+    return (
+        SAME_CLASS_CONTAINMENT_THRESHOLD > 0
+        and detection.get("categoryCode") == kept_detection.get("categoryCode")
+        and _bbox_containment(detection["bbox"], kept_detection["bbox"]) >= SAME_CLASS_CONTAINMENT_THRESHOLD
+    )
+
+
 def _remove_duplicate_detections(detections: list[dict[str, Any]]) -> list[dict[str, Any]]:
     kept: list[dict[str, Any]] = []
     for detection in sorted(detections, key=lambda item: item["confidence"], reverse=True):
-        if all(_bbox_iou(detection["bbox"], kept_detection["bbox"]) < NMS_IOU_THRESHOLD for kept_detection in kept):
+        # 11-24: IoU만 보던 비교를 _is_duplicate로 바꿔 같은 품목 포함 박스도 지움 (확신도 높은 박스를 남김)
+        if not any(_is_duplicate(detection, kept_detection) for kept_detection in kept):
             kept.append(detection)
     return kept
 
