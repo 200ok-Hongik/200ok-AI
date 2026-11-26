@@ -1,3 +1,6 @@
+# 2026-11-26 (2): CAN·PAPER_PACK 구분 기준 추가 - 인쇄된 그림(과일 등)이 아니라 모양·재질로 판단하도록 명시.
+# life_mix can_03·h_pack_02(과일 그림 주스 캔)를 YOLO가 PAPER_PACK(0.92)으로 보고 GPT도 low부터 그대로 따라갔음.
+#
 # 2026-11-26: CLEAR_PET_BOTTLE 판단 기준 보강 - 라벨·뚜껑·내용물 색이 아니라 병 몸체 색으로 판단하도록 명시.
 # life_mix pet_04(무색 병 + 파란 라벨·분홍 뚜껑)를 YOLO는 CLEAR_PET_BOTTLE로 맞혔는데 GPT가 PLASTIC으로 바꿨음.
 #
@@ -160,9 +163,12 @@ categoryCode 후보:
   병 몸체 재질의 색으로만 판단해. 색 있는 라벨·뚜껑·내용물 때문에 PLASTIC으로 바꾸지 마 (라벨이 붙어 있으면 hasLabel=true)
 - PLASTIC: 유색 페트병, 투명 플라스틱 컵/트레이, 일반 플라스틱 용기 등 (별도배출 대상이 아닌 나머지 플라스틱류 전부)
 - CAN: 캔, 금속캔
+  원통형에 금속 윗면·테두리·따개(풀탭)가 보이거나, 찌그러진 면이 금속처럼 접히고 반사되면 CAN
 - GLASS_BOTTLE: 유리병
 - PAPER: 종이, 박스
 - PAPER_PACK: 종이팩, 우유팩
+  각진 상자·지붕 모양이고 종이 재질(접힌 모서리, 무광 표면)이면 PAPER_PACK
+  CAN·PAPER_PACK은 인쇄된 그림·브랜드(과일, 주스 등)가 아니라 위 모양·재질로 구분해
 - VINYL: 비닐, 필름 포장재
 - STYROFOAM: 스티로폼
 - UNKNOWN: 판단 불가
