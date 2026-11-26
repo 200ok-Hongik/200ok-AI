@@ -1,3 +1,6 @@
+# 2026-11-26: CLEAR_PET_BOTTLE 판단 기준 보강 - 라벨·뚜껑·내용물 색이 아니라 병 몸체 색으로 판단하도록 명시.
+# life_mix pet_04(무색 병 + 파란 라벨·분홍 뚜껑)를 YOLO는 CLEAR_PET_BOTTLE로 맞혔는데 GPT가 PLASTIC으로 바꿨음.
+#
 # 2026-11-05: GPT 응답 시간 단축을 위해 MULTI_OBJECT_STATE_PROMPT의 출력 형식을 간결하게 바꿈 - 서버가 안 쓰는
 # modelVersion/needsReview/reviewReasons/yoloCategoryMatches와 상태 항목별 confidence·checklistId를 빼고, 상태는
 # states {이름: true/false/null}, 검토 플래그는 해당할 때만 flags 배열에 넣게 함. 캔·종이팩 isEmpty는 서버가 항상
@@ -154,6 +157,7 @@ bbox는 이미지 픽셀 좌표 [xMin,yMin,xMax,yMax] 순서야.
 
 categoryCode 후보:
 - CLEAR_PET_BOTTLE: 무색 투명 생수·음료 페트병 (별도배출 대상 - 색이 있거나 불투명하면 안 됨)
+  병 몸체 재질의 색으로만 판단해. 색 있는 라벨·뚜껑·내용물 때문에 PLASTIC으로 바꾸지 마 (라벨이 붙어 있으면 hasLabel=true)
 - PLASTIC: 유색 페트병, 투명 플라스틱 컵/트레이, 일반 플라스틱 용기 등 (별도배출 대상이 아닌 나머지 플라스틱류 전부)
 - CAN: 캔, 금속캔
 - GLASS_BOTTLE: 유리병
@@ -182,7 +186,7 @@ PLASTIC이 된 건지, 아니면 원래 투명한 다른 플라스틱(컵·트�
 된 건지 구분하는 정보로 쓰임 (실제 분리배출 기준상 무색 투명 페트병만 별도배출 대상).
 
 항목 판단 기준:
-- isTransparent: 무색 투명(내부가 비쳐 보임)이면 true, 유색/불투명이면 false
+- isTransparent: 병 몸체가 무색 투명(내부가 비쳐 보임)이면 true, 유색/불투명이면 false (라벨·뚜껑·내용물 색은 보지 않음)
 - hasLabel: 제거해야 하는 종이·비닐 라벨이나 상표 라벨이 붙어 있으면 true
 - isEmpty: 내용물이 없어 비어 보이면 true
 - hasCap: 분리해야 하는 뚜껑이 닫혀 있거나 붙어 있으면 true
